@@ -136,7 +136,7 @@ tensorboard --logdir=./logs
 
 ---
 
-## Inference: "Let Me Hear My Robot" 🎵
+## Inference: "Let Me Hear My Robot" 
 
 ### Single Command:
 
@@ -216,7 +216,7 @@ The Griffin-Lim vocoder is slower than your GPU. Welcome to life.
 
 ---
 
-## The Deep Dive: "But How Does It Actually Work?" 🧠
+## The Deep Dive: "But How Does It Actually Work?" 
 
 ### Phase 1: Text → Phonemes
 
@@ -353,11 +353,11 @@ MIT? Sure. Use it however you want. Make cursed TTS models. Make your alarm cloc
 
 Congratulations! You now have the tools to:
 
-✅ Train VITS on your own GPU  
-✅ Convert any text to speech (kind of)  
-✅ Convince people your computer is sentient  
-✅ Waste electricity impressively  
-✅ Understand mel-spectrograms (approximately)
+-Train VITS on your own GPU  
+-Convert any text to speech (kind of)  
+-Convince people your computer is sentient  
+-Waste electricity impressively  
+-Understand mel-spectrograms (approximately)
 
 **Now go forth and make your GPU suffer for science!**
 
