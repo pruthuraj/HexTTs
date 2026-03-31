@@ -1,0 +1,429 @@
+"""
+VITS Model Implementation
+Complete neural network architecture for Text-to-Speech
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from typing import Optional, Tuple
+
+# Standard Arpabet phoneme set size
+VOCAB_SIZE = 149
+
+
+class PositionalEncoding(nn.Module):
+    """Positional encoding for transformer attention"""
+    
+    def __init__(self, d_model: int, max_len: int = 5000):
+        super().__init__()
+        
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
+                            (-math.log(10000.0) / d_model))
+        
+        pe[:, 0::2] = torch.sin(position * div_term)
+        if d_model % 2 == 1:
+            pe[:, 1::2] = torch.cos(position * div_term[:-1])
+        else:
+            pe[:, 1::2] = torch.cos(position * div_term)
+        
+        self.register_buffer('pe', pe.unsqueeze(0))
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (batch_size, seq_len, d_model)
+        Returns:
+            x + positional encoding
+        """
+        return x + self.pe[:, :x.size(1), :]
+
+
+class TransformerBlock(nn.Module):
+    """Single transformer block with attention and FFN"""
+    
+    def __init__(self, hidden_size: int, num_heads: int, kernel_size: int, dropout: float):
+        super().__init__()
+        
+        # Self-attention
+        self.attention = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        
+        # Feed-forward network
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size * 4, hidden_size),
+            nn.Dropout(dropout)
+        )
+        
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(hidden_size)
+        self.norm2 = nn.LayerNorm(hidden_size)
+        
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Args:
+            x: (batch_size, seq_len, hidden_size)
+            mask: optional attention mask
+        Returns:
+            (batch_size, seq_len, hidden_size)
+        """
+        # Self-attention with residual
+        attn_out, _ = self.attention(x, x, x, key_padding_mask=mask)
+        x = x + self.dropout(attn_out)
+        x = self.norm1(x)
+        
+        # FFN with residual
+        ffn_out = self.ffn(x)
+        x = x + self.dropout(ffn_out)
+        x = self.norm2(x)
+        
+        return x
+
+
+class TextEncoder(nn.Module):
+    """Encodes phoneme sequence to embeddings"""
+    
+    def __init__(self, vocab_size: int, hidden_size: int, num_layers: int,
+                 num_heads: int, kernel_size: int, dropout: float):
+        super().__init__()
+        
+        # Embedding layer (phoneme → vector)
+        self.embedding = nn.Embedding(vocab_size, hidden_size)
+        self.pos_encoding = PositionalEncoding(hidden_size)
+        
+        # Transformer blocks
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(hidden_size, num_heads, kernel_size, dropout)
+            for _ in range(num_layers)
+        ])
+        
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x: torch.Tensor, lengths: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Args:
+            x: phoneme indices (batch_size, seq_len)
+            lengths: sequence lengths for masking
+        Returns:
+            embeddings (batch_size, seq_len, hidden_size)
+        """
+        # Embed and add positional encoding
+        x = self.embedding(x) * math.sqrt(self.embedding.embedding_dim)
+        x = self.pos_encoding(x)
+        x = self.dropout(x)
+        
+        # Create mask if lengths provided
+        mask = None
+        if lengths is not None:
+            mask = self._get_mask(x.size(1), lengths, x.device)
+        
+        # Pass through transformer blocks
+        for block in self.transformer_blocks:
+            x = block(x, mask=mask)
+        
+        return x
+    
+    @staticmethod
+    def _get_mask(max_len: int, lengths: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """Create attention mask from lengths"""
+        batch_size = lengths.size(0)
+        mask = torch.arange(max_len, device=device).unsqueeze(0) >= lengths.unsqueeze(1)
+        return mask
+
+
+class DurationPredictor(nn.Module):
+    """Predicts duration for each phoneme"""
+    
+    def __init__(self, hidden_size: int, filters: int, kernel_sizes: list, dropout: float):
+        super().__init__()
+        
+        self.conv_layers = nn.ModuleList()
+        self.norms = nn.ModuleList()
+        
+        in_channels = hidden_size
+        for kernel_size in kernel_sizes:
+            self.conv_layers.append(
+                nn.Conv1d(in_channels, filters, kernel_size, padding=kernel_size // 2)
+            )
+            self.norms.append(nn.LayerNorm(filters))
+            in_channels = filters
+        
+        self.linear = nn.Linear(filters, 1)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (batch_size, seq_len, hidden_size)
+        Returns:
+            durations (batch_size, seq_len, 1)
+        """
+        # Transpose for conv1d
+        x = x.transpose(1, 2)  # (batch_size, hidden_size, seq_len)
+        
+        # Pass through conv layers
+        for conv, norm in zip(self.conv_layers, self.norms):
+            x = conv(x)
+            x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
+            x = norm(x)
+            x = F.relu(x)
+            x = self.dropout(x)
+            x = x.transpose(1, 2)  # (batch_size, filters, seq_len)
+        
+        # Predict duration
+        x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
+        duration = self.linear(x)  # (batch_size, seq_len, 1)
+        duration = torch.clamp(F.softplus(duration), min=1.0)  # Ensure positive
+        
+        return duration
+
+
+class PosteriorEncoder(nn.Module):
+    """Encodes mel-spectrogram to latent distribution (training only)"""
+    
+    def __init__(self, mel_channels: int, hidden_size: int, latent_dim: int):
+        super().__init__()
+        
+        self.conv1 = nn.Conv1d(mel_channels, hidden_size, 1)
+        self.conv2 = nn.Conv1d(hidden_size, hidden_size, 1)
+        
+        self.mu_linear = nn.Linear(hidden_size, latent_dim)
+        self.logvar_linear = nn.Linear(hidden_size, latent_dim)
+    
+    def forward(self, mel_spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            mel_spec: (batch_size, mel_channels, time_steps)
+        Returns:
+            (z, mu, logvar) where z is sampled latent code
+        """
+        x = F.relu(self.conv1(mel_spec))
+        x = F.relu(self.conv2(x))
+        x = x.transpose(1, 2)  # (batch_size, time_steps, hidden_size)
+        
+        mu = self.mu_linear(x)
+        logvar = self.logvar_linear(x)
+        logvar = torch.clamp(logvar, min=-10.0, max=10.0) # Prevent extreme values
+        
+        # Reparameterization trick: sample z
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        z = mu + eps * std
+        
+        return z, mu, logvar
+
+
+class Decoder(nn.Module):
+    """Decodes latent codes to mel-spectrogram"""
+    
+    def __init__(self, latent_dim: int, hidden_size: int, mel_channels: int, num_layers: int):
+        super().__init__()
+        
+        # Initial projection
+        self.projection = nn.Linear(latent_dim, hidden_size)
+        
+        # Transformer decoder blocks
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(hidden_size, num_heads=2, kernel_size=3, dropout=0.1)
+            for _ in range(num_layers)
+        ])
+        
+        # Output layer
+        self.output = nn.Linear(hidden_size, mel_channels)
+    
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            z: latent codes (batch_size, time_steps, latent_dim)
+        Returns:
+            mel-spectrogram (batch_size, mel_channels, time_steps)
+        """
+        x = self.projection(z)
+        
+        # Pass through transformer blocks
+        for block in self.transformer_blocks:
+            x = block(x)
+        
+        # Output mel-spectrogram
+        mel = self.output(x)  # (batch_size, time_steps, mel_channels)
+        mel = mel.transpose(1, 2)  # (batch_size, mel_channels, time_steps)
+        
+        return mel
+
+
+class VITS(nn.Module):
+    """
+    Complete VITS Text-to-Speech Model
+    
+    Pipeline:
+        Phoneme sequence → Text Encoder → Duration Predictor
+                                       ↓
+                        Duration Expansion (Length Regulator)
+                                       ↓
+                    Posterior Encoder (training only)
+                                       ↓
+                        Variational Sampler
+                                       ↓
+                           Decoder → Mel-spectrogram
+    """
+    
+    def __init__(self, config: dict):
+        super().__init__()
+        
+        self.config = config
+        
+        # Vocabulary size (number of unique phonemes)
+        # Common values: 149 for Arpabet
+        self.vocab_size = config.get('vocab_size', 149)
+        
+        # Text Encoder
+        self.encoder = TextEncoder(
+            vocab_size=self.vocab_size,
+            hidden_size=config['encoder_hidden_size'],
+            num_layers=config['encoder_num_layers'],
+            num_heads=config['encoder_num_heads'],
+            kernel_size=config['encoder_kernel_size'],
+            dropout=config['encoder_dropout']
+        )
+        
+        # Duration Predictor
+        self.duration_predictor = DurationPredictor(
+            hidden_size=config['encoder_hidden_size'],
+            filters=config['duration_predictor_filters'],
+            kernel_sizes=config['duration_predictor_kernel_sizes'],
+            dropout=config['duration_predictor_dropout']
+        )
+        
+        # Posterior Encoder (training only)
+        self.posterior_encoder = PosteriorEncoder(
+            mel_channels=config['n_mel_channels'],
+            hidden_size=config['decoder_hidden_size'],
+            latent_dim=config['latent_dim']
+        )
+        
+        # Decoder
+        self.decoder = Decoder(
+            latent_dim=config['latent_dim'],
+            hidden_size=config['decoder_hidden_size'],
+            mel_channels=config['n_mel_channels'],
+            num_layers=config['decoder_num_layers']
+        )
+    
+    def forward(self, phonemes: torch.Tensor, mel_spec: Optional[torch.Tensor] = None,
+                lengths: Optional[torch.Tensor] = None) -> dict:
+        """
+        Forward pass for training
+        
+        Args:
+            phonemes: (batch_size, seq_len) phoneme indices
+            mel_spec: (batch_size, mel_channels, time_steps) ground truth mel-spec (training)
+            lengths: (batch_size,) sequence lengths
+        
+        Returns:
+            dict with:
+                - predicted_mel: predicted mel-spectrogram
+                - duration: predicted duration
+                - z, mu, logvar: latent variables (training only)
+        """
+        
+        # Text Encoder: Phonemes → Embeddings
+        encoder_out = self.encoder(phonemes, lengths=lengths)  # (batch_size, seq_len, hidden)
+        
+        # Duration Predictor
+        duration = self.duration_predictor(encoder_out)  # (batch_size, seq_len, 1)
+        
+        # Length Regulator (Expand by duration)
+        expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
+        
+        # Get latent codes
+        if mel_spec is not None and self.training:
+            # Training: use posterior encoder
+            z, mu, logvar = self.posterior_encoder(mel_spec)
+        else:
+            # Inference: sample from prior N(0, 1)
+            if mel_spec is None:
+                expanded_len = expanded.size(1)
+                z = torch.randn(expanded.size(0), expanded_len, self.config['latent_dim'],
+                              device=expanded.device)
+                mu, logvar = None, None
+            else:
+                z, mu, logvar = self.posterior_encoder(mel_spec)
+        
+        # Decoder: Latent → Mel-spectrogram
+        predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
+        
+        return {
+            'predicted_mel': predicted_mel,
+            'duration': duration,
+            'z': z,
+            'mu': mu,
+            'logvar': logvar
+        }
+    
+    @staticmethod
+    def _length_regulate(x: torch.Tensor, duration: torch.Tensor) -> torch.Tensor:
+        """
+        Expand sequence by repeating frames according to predicted duration
+        
+        Args:
+            x: (batch_size, seq_len, hidden_size)
+            duration: (batch_size, seq_len, 1) predicted durations
+        
+        Returns:
+            expanded: (batch_size, total_len, hidden_size)
+        """
+        batch_size, seq_len, hidden_size = x.size()
+        
+        # Round duration to nearest integer
+        duration = torch.round(duration.squeeze(-1)).long()  # (batch_size, seq_len)
+        
+        outputs = []
+        for i in range(batch_size):
+            output = []
+            for j in range(seq_len):
+                output.append(x[i, j].unsqueeze(0).repeat(int(duration[i,j].item()), 1))
+            outputs.append(torch.cat(output, dim=0))
+        
+        # Pad to same length in batch
+        max_len = max([o.size(0) for o in outputs])
+        padded = torch.zeros(batch_size, max_len, hidden_size, device=x.device)
+        
+        for i, output in enumerate(outputs):
+            padded[i, :output.size(0), :] = output
+        
+        return padded
+
+
+if __name__ == "__main__":
+    # Test the model
+    config = {
+        'vocab_size': 149,
+        'encoder_hidden_size': 384,
+        'encoder_num_layers': 4,
+        'encoder_num_heads': 2,
+        'encoder_kernel_size': 3,
+        'encoder_dropout': 0.1,
+        'duration_predictor_filters': 256,
+        'duration_predictor_kernel_sizes': [3, 3],
+        'duration_predictor_dropout': 0.5,
+        'n_mel_channels': 80,
+        'decoder_hidden_size': 512,
+        'decoder_num_layers': 4,
+        'latent_dim': 192,
+    }
+    
+    model = VITS(config)
+    print("VITS model created successfully!")
+    print(f"Total parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")

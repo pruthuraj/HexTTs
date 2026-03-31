@@ -1,0 +1,21 @@
+# Ignore files of log , checkpoints, and data
+
+logs/*
+!logs/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+data/*
+!data/.gitkeep
+
+# Ignore model checkpoints and intermediate files
+*.pt
+__pycache__/
+
+
+# Ignore virtual environment and Jupyter notebook checkpoints
+# and also ignore raw data files like CSV, WAV, and NPY which are not needed in the repository
+*venv/
+*.ipynb_checkpoints
+*.csv
+*.wav
+*.npy

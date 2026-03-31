@@ -1,0 +1,183 @@
+# VITS Configuration File
+# All training parameters for VITS TTS model
+
+# ============================================================
+# PATHS AND DATA
+# ============================================================
+
+# Path to prepared dataset (with train.txt and val.txt)
+data_dir: "./data/ljspeech_prepared"
+
+# Path to audio files
+audio_dir: "./data/LJSpeech-1.1/wavs"
+
+# Output directories
+log_dir: "./logs"
+checkpoint_dir: "./checkpoints"
+
+# ============================================================
+# AUDIO PROCESSING
+# ============================================================
+
+# Audio sample rate (Hz)
+sample_rate: 22050
+
+# Number of mel-spectrogram frequency bins
+n_mel_channels: 80
+
+# Mel-spectrogram parameters
+mel_n_fft: 1024 # FFT window size
+mel_hop_length: 256 # Hop size (overlap)
+mel_win_length: 1024 # Window length
+mel_f_min: 0 # Minimum frequency
+mel_f_max: 11025 # Maximum frequency (sample_rate / 2)
+
+# Audio normalization
+ref_level_db: 20 # Normalize to this dB level
+min_level_db: -100 # Minimum threshold
+
+# ============================================================
+# MODEL ARCHITECTURE
+# ============================================================
+
+# Text Encoder
+encoder_hidden_size: 384
+encoder_num_layers: 4
+encoder_num_heads: 2
+encoder_kernel_size: 3
+encoder_dropout: 0.1
+
+# Duration Predictor
+duration_predictor_filters: 256
+duration_predictor_kernel_sizes: [3, 3]
+duration_predictor_dropout: 0.5
+
+# Decoder (Generator)
+decoder_hidden_size: 512
+decoder_num_layers: 4
+decoder_num_heads: 2
+decoder_kernel_size: 3
+decoder_dropout: 0.1
+
+# Variational parameters
+latent_dim: 192 # Dimension of latent space
+posterior_flow_num_layers: 4
+
+# ============================================================
+# TRAINING
+# ============================================================
+
+# Learning rates
+# learning_rate: 0.002
+learning_rate: 0.0002 # Lower learning rate for more stable training
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_eps: 1.0e-9
+scheduler_type: "exponential" # "constant", "linear", or "exponential"
+scheduler_step: 1000 # Steps before decay
+scheduler_gamma: 0.999 # Decay rate per step
+
+# Batch size
+batch_size: 4
+
+# Number of training epochs
+num_epochs: 100
+
+# Gradient clipping
+# grad_clip_val: 1.0
+grad_clip_val: 0.5 # Prevent exploding gradients
+
+# Number of workers for data loading
+num_workers: 4
+# num_workers: 0 # Set to 0 if you encounter issues with multiprocessing on Windows
+
+# Device
+device: "cuda" # "cuda" or "cpu"
+
+# ============================================================
+# LOSS WEIGHTS
+# ============================================================
+
+# Weight for reconstruction loss (mel-spectrogram MSE)
+loss_weight_reconstruction: 1.0
+
+# Weight for KL divergence loss
+# loss_weight_kl: 0.01
+loss_weight_kl: 0.001 # Lower KL weight can help stabilize training
+
+# Weight for duration loss
+loss_weight_duration: 1.0
+
+# ============================================================
+# VALIDATION AND CHECKPOINTING
+# ============================================================
+
+# Validate every N steps
+validation_interval: 500
+
+# Save checkpoint every N steps
+checkpoint_interval: 1000
+
+# Keep only last N checkpoints
+max_checkpoints_keep: 5
+
+# Early stopping patience (epochs without improvement)
+early_stopping_patience: 20
+
+# ============================================================
+# LOGGING AND MONITORING
+# ============================================================
+
+# Log loss every N steps
+log_interval: 100
+
+# Save audio samples every N steps
+sample_interval: 1000
+
+# Number of samples to generate during validation
+num_samples_to_generate: 3
+
+# ============================================================
+# ADVANCED SETTINGS
+# ============================================================
+
+# Mixed precision training (speeds up training on newer GPUs)
+# use_amp: true
+use_amp: false # Set to false if you encounter stability issues
+
+# Number of steps to warmup learning rate (0 = no warmup)
+warmup_steps: 0
+
+# Sequence length for training (in frames)
+# Longer sequences need more GPU memory
+# 22050 Hz * 10 seconds / 256 hop_length ≈ 861 frames
+max_seq_length: 500 # Approximately 5 seconds at 22050 Hz
+
+# Random seed for reproducibility
+seed: 42
+
+# ============================================================
+# INFERENCE SETTINGS
+# ============================================================
+
+# Temperature for sampling (higher = more randomness)
+temperature: 1.0
+
+# Number of inference steps
+# Higher = slower but potentially better quality
+inference_steps: 1
+
+# ============================================================
+# DESCRIPTION
+# ============================================================
+
+# These settings are optimized for:
+# - Single GPU training (RTX 3060 or better)
+# - LJSpeech dataset
+# - ~4-8 hours training time for good results
+# - ~24 hours for excellent results
+#
+# Adjust based on:
+# - GPU memory: Reduce batch_size or max_seq_length if OOM
+# - Training time: Increase learning_rate for faster convergence
+# - Quality: Increase num_epochs for better results
