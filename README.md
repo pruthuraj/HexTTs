@@ -6,11 +6,11 @@
 
 ## What Is This Monstrosity?
 
-HexTTs is a **Text-to-Speech (TTS)** project that teaches an AI neural network to convert boring text into spoken words. It's basically teaching a computer to be a voice actor, except it won't complain about late nightshots or demand residuals.
+HexTTs is a **Text-to-Speech (TTS)** project that teaches an AI neural network to convert boring text into spoken words. It's basically teaching a computer to be a voice actor, except it won't complain about late night shoots or demand residuals.
 
 - **Trained on**: 13,100 audio clips of a very patient woman (LJSpeech dataset)
 - **Powers**: The ability to type "hello world" and actually hear your computer SAY it
-- **Side effects**: Your GPU fans will sound like a jet engine, and your electricity bill will cry
+- **Side effects**: Your GPU fans will sound like a jet engine, your electricity bill will cry, and you'll start explaining mel-spectrograms at parties
 
 ---
 
@@ -18,53 +18,58 @@ HexTTs is a **Text-to-Speech (TTS)** project that teaches an AI neural network t
 
 ```
 HexTTs/
-├── train_vits.py           ← The actual sorcery happens here
-├── inference_vits.py       ← "Please make sounds from my text"
-├── tts_app.py              ← Interactive mode (for people who hate command lines)
-├── vits_model.py           ← The neural network brain (45 million parameters btw)
-├── vits_data.py            ← Data loading (it's surprisingly boring)
-├── vits_config.yaml        ← "How angry should my GPU get?"
-├── prepare_data.py         ← "Let me fix the phonemes because the dataset was messy"
-├── validate_dataset.py     ← Quality control (spoiler: data is weird)
-├── requirements.txt        ← "Pip install your life away"
-├── checkpoints/            ← Model snapshots (save the good ones!)
-├── data/
-│   ├── LJSpeech-1.1/      ← 13,100 voice samples (24GB of pure audio)
-│   └── ljspeech_prepared/ ← "The cleaned up version"
-├── logs/                   ← TensorBoard metrics (watch your loss go brrr)
-└── tts_output/            ← The fruits of your GPU's labor
+├── train_vits.py              ← The actual sorcery happens here
+├── inference_vits.py          ← "Please make sounds from my text"
+├── tts_app.py                 ← Interactive mode (for people who hate command lines)
+│
+├── vits_model.py              ← The neural network brain (45 million parameters btw)
+├── vits_data.py               ← Data loading (it's surprisingly boring)
+├── vits_data_cached.py        ← Data loading, but make it fast (new and improved suffering)
+│
+├── vits_config.yaml           ← "How angry should my GPU get?"
+│
+├── prepare_data.py            ← "Let me fix the phonemes because the dataset was messy"
+├── validate_dataset.py        ← Quality control (spoiler: data is weird)
+├── precompute_features.py     ← Computes mel spectrograms ahead of time so training doesn't die slowly
+│
+├── checkpoints/               ← Model snapshots (save the good ones, delete the tragic ones)
+├── logs/                      ← TensorBoard metrics (watch your loss go brrr)
+├── tts_output/                ← The fruits of your GPU's labor
+│
+└── data/
+    ├── LJSpeech-1.1/          ← 13,100 voice samples (24GB of pure audio patience)
+    └── ljspeech_prepared/     ← "The cleaned up version" (+ cached/ if you're smart)
 ```
 
 ---
 
 ## Installation: "The Suffering Begins"
 
-### Step 1: Set Up Your GPU (If You Have One)
-
-```bash
-# Check if your NVIDIA card is ready to suffer
-nvidia-smi
-
-# If this doesn't work, Google for 2 hours and cry a little
-```
-
-### Step 2: Create Virtual Environment
+### Step 1: Create Virtual Environment
 
 ```bash
 # Isolate yourself from the chaos
 python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac (jk, no one uses Mac for this)
+venv\Scripts\activate        # Windows
+source venv/bin/activate     # Linux/Mac
 ```
 
-### Step 3: Install PyTorch (The REAL PyTorch, with CUDA)
+### Step 2: Install PyTorch (The REAL PyTorch, with CUDA)
 
 ```bash
 # This is the CORRECT way (don't @ me, CPU users)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-### Step 4: Install Everything Else
+Verify it actually got CUDA support:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+# Should print: True
+# If it prints False, you installed the sad version of PyTorch. Start over.
+```
+
+### Step 3: Install Everything Else
 
 ```bash
 pip install -r requirements.txt
@@ -73,8 +78,10 @@ pip install -r requirements.txt
 The magic incantations:
 
 - **librosa**: For pretending you understand spectrograms
-- **g2p_en**: Converts "the quick brown fox" into "DH AH K W IH K BR AW N F AA K S"
-- **numpy<2**: Not numpy 2 (it breaks everything, trust me)
+- **g2p_en**: Converts "the quick brown fox" into "DH AH K W IH K BR AW N F AA K S" (very slowly)
+- **numpy**: Used everywhere. Breathes numpy.
+- **matplotlib**: For when you want to stare at loss curves and feel something
+- **tensorboard**: Real-time loss anxiety, now with graphs
 
 ---
 
@@ -84,14 +91,54 @@ The magic incantations:
 # Download LJSpeech manually (13GB) from:
 # https://keithito.com/LJ-Speech-Dataset/
 
-# Validate it's not corrupted
+# Place it in: data/LJSpeech-1.1
+
+# Validate it's not corrupted or haunted
 python validate_dataset.py ./data/LJSpeech-1.1
 
 # Convert words to phonemes (this is important, I swear)
 python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
 ```
 
-**What happens:** The script reads 13,100 transcripts, turns them into phonemes, and creates train/val splits. It's less exciting than it sounds.
+**What happens:** The script reads 13,100 transcripts, turns them into phonemes, and creates train/val splits. It's less exciting than it sounds. The output is:
+
+```
+train.txt        ← ~12,445 phoneme entries (the main event)
+val.txt          ← ~655 entries (the understudy)
+phoneme sequences ← cryptic strings of capitalized nonsense that somehow become speech
+```
+
+---
+
+## Speed Optimization: "Wait, Training Can Be FASTER?"
+
+Yes. By default, mel spectrograms are computed from scratch every single batch during training. This is like baking the same bread every time you want a sandwich. `precompute_features.py` bakes all the bread once upfront.
+
+```bash
+python precompute_features.py --config vits_config.yaml
+```
+
+This creates:
+
+```
+data/ljspeech_prepared/cache/
+    mels/    ← Precomputed mel spectrograms (the bread)
+    ids/     ← File identifiers (the labels on the bread)
+```
+
+### Enable the Cached Loader
+
+In `train_vits.py`, swap this one line:
+
+```python
+# SLOW (the old way, computing mels fresh every batch like a masochist)
+from vits_data import create_dataloaders
+
+# FAST (the new way, reading pre-baked mels like a rational person)
+from vits_data_cached import create_dataloaders
+```
+
+**Result:** Training becomes significantly faster. Your GPU actually gets to do GPU things instead of waiting for your CPU to finish its homework.
 
 ---
 
@@ -102,51 +149,64 @@ python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
 python train_vits.py --config vits_config.yaml --device cuda
 ```
 
-### What Happens:
+Recommended starting config (especially if you don't have a flagship GPU):
 
-1. Neural network gets a text → phoneme sequence
-2. Network predicts a mel-spectrogram (fancy spectrogram)
-3. Compares to real spectrogram
+```yaml
+batch_size: 4
+num_workers: 2
+use_amp: true # Automatic Mixed Precision — free speed, take it
+grad_clip_val: 0.5 # Prevents your gradients from achieving escape velocity
+```
+
+### What Happens (A Dramatic Retelling):
+
+1. Neural network receives a phoneme sequence
+2. Network predicts a mel-spectrogram (fancy picture of sound)
+3. Compares to the real spectrogram from the dataset
 4. Cries about how wrong it was (loss calculation)
-5. Updates weights to be less wrong
+5. Updates 45 million weights to be slightly less wrong
 6. Repeats 10,000+ times
 7. **Eventually**: Makes acceptable robot sounds
 
 ### Expected Timeline:
 
-- **Hour 0-1**: "This is going to work!" → Audio sounds like garbage disposal
-- **Hour 4-8**: "Okay, sounds slightly human-ish" → Still pretty robotic
-- **Hour 12-24**: "Not bad!" → Decent speech synthesis
-- **Hour 24+**: "This is actually good" → Congratulations, you wasted a day of electricity
+| Time       | Audio Quality              | Your Mood                  |
+| ---------- | -------------------------- | -------------------------- |
+| Hour 0–1   | Garbage disposal simulator | Optimistic, possibly naive |
+| Hour 4–8   | Vaguely human-shaped noise | Cautiously hopeful         |
+| Hour 12–24 | Not bad, actually          | Smug                       |
+| Hour 24+   | Genuinely good             | Please go to sleep         |
 
-### Monitoring:
+### Monitoring (The Loss Curve Staring Contest):
 
 ```bash
-# In another terminal, watch the loss curves in real-time
+# In another terminal, watch the descent into correctness
 tensorboard --logdir=./logs
 # Open http://localhost:6006
 ```
 
-### Key Metrics You'll Obsess Over:
+**Key Metrics You'll Obsess Over:**
 
-- **Total Loss**: Should go ↓ (good) not ↑ (bad)
-- **Recon Loss**: How wrong the mel-spectrogram is
-- **KL Loss**: Prevents the neural network from totally cheating
-- **Your Sanity**: Will also go ↓
+- **Total Loss**: Should go ↓ (good) not ↑ (alarming)
+- **Reconstruction Loss**: How wrong the mel-spectrogram prediction is
+- **KL Loss**: Prevents the network from totally cheating its way through training
+- **Your Sanity**: Will also go ↓, but recovers post-training
 
 ---
 
-## Inference: "Let Me Hear My Robot"
+## Inference: "Let Me Hear My Robot" 🎵
 
 ### Single Command:
 
 ```bash
-python inference_vits.py `
-  --checkpoint checkpoints/best_model.pt `
-  --config vits_config.yaml `
-  --text "Hello, I am a robot overlord" `
+python inference_vits.py \
+  --checkpoint checkpoints/best_model.pt \
+  --config vits_config.yaml \
+  --text "Hello I am Pruthu" \
   --output hello.wav
 ```
+
+Output lands in `tts_output/hello.wav`. Go listen to it. Marvel at your creation. Notice it sounds slightly robotic. Accept it. This is normal.
 
 ### Interactive Mode (For Impatient People):
 
@@ -154,215 +214,209 @@ python inference_vits.py `
 python tts_app.py --checkpoint checkpoints/best_model.pt
 ```
 
-Then type stuff:
+Then type stuff at it:
 
 ```
 > Hello world
-> Save this one
-> My name is HexTTs and I sound weird
+> This is a neural text to speech system
+> My voice is 45 million parameters of math
 > exit
 ```
 
-Output files go to `tts_output/` directory.
+---
+
+## Resume Training: "Oops, It Crashed"
+
+If your training gets interrupted (power cut, GPU tantrum, cat walked on keyboard):
+
+```bash
+# See what checkpoints you have
+dir checkpoints/
+
+# Resume from the latest
+python train_vits.py \
+  --config vits_config.yaml \
+  --checkpoint checkpoints/checkpoint_step_5000.pt
+```
+
+It's like saving in a video game. Except the game is teaching math to a robot and the save files are 200MB each.
 
 ---
 
-## Common Problems & Funny Solutions
+## Common Problems & Completely Unsympathetic Solutions
 
 ### "CUDA out of memory"
 
 ```
 Your GPU: "I'm full"
 You: "But I only gave you one sentence!"
-Your GPU: "TOO BAD"
+Your GPU: "TOO BAD. Reduce batch_size or leave me alone."
 ```
 
-**Fix:** Reduce `batch_size` in vits_config.yaml (8, 4, or 2)
+**Fix:** Open `vits_config.yaml`, set `batch_size` to 4, then 2, then 1 if you must. Yes, 1. We don't judge. (We judge a little.)
 
 ### "Loss is not decreasing"
 
-Your learning rate is probably too aggressive. Like giving your neural network espresso.
+Your learning rate is probably too aggressive. Like giving your neural network three espressos and telling it to do calculus.
 
 ```yaml
-learning_rate: 0.001 # More like decaf
+learning_rate: 0.001 # Decaf. Responsible. Adult.
 ```
 
 ### "The audio sounds robotic"
 
-That's because it IS a robot. It needs more training. More training = More tears in your electricity bill.
+That's because it IS a robot. It needs more training. More training = more time = more electricity = more tears. Keep going.
 
 ### "ModuleNotFoundError: No module named 'vits_model'"
 
-Did you download ALL the files? Did you put them in the SAME folder? Did you actually read the instructions?
+Did you download ALL the files? Did you put them in the SAME folder? Did you activate your virtual environment? Did you read the instructions even once?
 
-### "My audio is 10 seconds long why is it processing for a minute?"
+### "My audio is 10 seconds but processing took a minute"
 
-The Griffin-Lim vocoder is slower than your GPU. Welcome to life.
+Welcome to Griffin-Lim. It converts spectrograms to audio using an iterative algorithm from 1984, and it shows. This is why HiFi-GAN exists (see: Future Improvements). For now: patience.
+
+### "precompute_features.py ran but training is still slow"
+
+Did you actually swap `vits_data` to `vits_data_cached` in `train_vits.py`? Go look. I'll wait.
 
 ---
 
 ## File Descriptions (TL;DR Edition)
 
-| File                  | What It Does                         | When You Care              |
-| --------------------- | ------------------------------------ | -------------------------- |
-| `train_vits.py`       | Trains the entire model              | Always                     |
-| `inference_vits.py`   | Makes audio from text                | After training             |
-| `tts_app.py`          | Pretty UI for making audio           | When you're tired of CLI   |
-| `vits_model.py`       | 45 million parameters of confusion   | Never (it's magic)         |
-| `vits_data.py`        | Loads data without crashing          | During training            |
-| `vits_config.yaml`    | "How do I balance quality vs speed?" | Before training            |
-| `prepare_data.py`     | Fixes the dataset                    | Once, then forget about it |
-| `validate_dataset.py` | "Is my data okay?"                   | When paranoid              |
+| File                     | What It Does                                     | When You Care                   |
+| ------------------------ | ------------------------------------------------ | ------------------------------- |
+| `train_vits.py`          | Trains the entire model                          | Always                          |
+| `inference_vits.py`      | Makes audio from text                            | After training                  |
+| `tts_app.py`             | Pretty interface for making audio                | When you're tired of CLI        |
+| `vits_model.py`          | 45 million parameters of confusion               | Never (it's magic, don't touch) |
+| `vits_data.py`           | Original data loader                             | During training (slow version)  |
+| `vits_data_cached.py`    | Faster data loader                               | During training (smart version) |
+| `vits_config.yaml`       | "How do I balance quality vs speed vs survival?" | Before training                 |
+| `prepare_data.py`        | Converts transcripts to phonemes                 | Once, then forget it            |
+| `validate_dataset.py`    | "Is my data okay?"                               | When paranoid                   |
+| `precompute_features.py` | Pre-bakes mel spectrograms                       | Before training (do this)       |
 
 ---
 
-## The Deep Dive: "But How Does It Actually Work?"
+## How Does It Actually Work?
 
-### Phase 1: Text → Phonemes
+### Step 1: Text → Phonemes
 
 ```
-Input: "The coffee is ready"
-Output: "DH AH K AA F I IH Z R EH D IH"
+Input:  "The coffee is ready"
+Output: "DH AH K AA F IY IH Z R EH D IY"
 ```
 
-This is using g2p_en (Grapheme-to-Phoneme). It's like a really smart autocorrect, but for sounds.
+g2p_en converts spelling into actual sounds, because English spelling is a crime against phonetics and should not be trusted with anything important.
 
-### Phase 2: Phonemes → Mel-Spectrogram
+### Step 2: Phonemes → Mel Spectrogram
 
-Your neural network (VITS) takes phoneme sequences and predicts a mel-spectrogram. A mel-spectrogram is basically a fancy picture of sound. Spectrograms are cool because:
+VITS takes phoneme sequences and predicts a mel-spectrogram — a 2D picture of sound where X = time, Y = frequency (mel scale), and brightness = loudness. The model learns to draw the right picture for each sentence. 45 million parameters worth of drawing lessons.
 
-- They show time on the X-axis
-- Frequency on the Y-axis (but in the "mel" scale, which matches how humans hear)
-- Intensity as color brightness
+### Step 3: Mel Spectrogram → Audio
 
-### Phase 3: Mel-Spectrogram → Audio
-
-Griffin-Lim algorithm reconstructs audio from the spectrogram. It's basically audio origami.
+The vocoder converts the spectrogram picture back into actual audio waves. We use Griffin-Lim (classic, a bit robotic) because it requires no extra training. HiFi-GAN is the upgrade path if you want to feel fancy later.
 
 ---
 
-## GPU Requirements (Will You Suffer?)
+## GPU Requirements (Will You Suffer? A Guide)
 
-| GPU               | Training Time | Batch Size | Agony Level |
-| ----------------- | ------------- | ---------- | ----------- |
-| RTX 3060 (6GB)    | ~24 hours     | 8          | Modern      |
-| RTX 3060 Ti (8GB) | ~12 hours     | 16         | Mild        |
-| RTX 4090 (24GB)   | ~3 hours      | 32         | Tolerable   |
-| CPU               | ... days      | 1          | **Maximum** |
+| GPU                   | Training Time         | Recommended batch_size | Agony Level           |
+| --------------------- | --------------------- | ---------------------- | --------------------- |
+| RTX 4090 (24GB)       | ~3 hours              | 32                     | Tolerable             |
+| RTX 3060 Ti (8GB)     | ~12 hours             | 16                     | Mild                  |
+| RTX 3060 (6GB)        | ~24 hours             | 8                      | Modern                |
+| **RTX 3050 Ti (4GB)** | **~1–2 days**         | **4**                  | **Dedicated**         |
+| CPU                   | Several business days | 1 s                    | **Maximum Suffering** |
 
-**Pro Tip:** If you use CPU mode, just let it training in the background for a month. Seriously.
-
----
-
-## Resume Training: "Oops, It Crashed"
-
-If your training gets interrupted:
-
-```bash
-# Find the latest checkpoint
-dir checkpoints/
-
-# Resume from where you left off
-python train_vits.py --config vits_config.yaml --checkpoint checkpoints/checkpoint_step_005000.pt
-```
-
-It's like saving in a video game. Except the game is making AI sounds.
+**If you have an RTX 3050 Ti:** Set `batch_size: 4`, enable `use_amp: true`, run `precompute_features.py` first, and accept that your GPU is doing its absolute best. Respect it.
 
 ---
 
-## What's Actually in This Project?
+## Model Architecture (For the Curious)
 
-This is a **VITS (Variational Inference Text-to-Speech)** implementation because:
+This implements **VITS (Variational Inference Text-to-Speech)** — a single model that goes from phonemes to audio in one shot.
 
-- VITS = Good quality audio
-- VITS = Relatively fast inference
-- VITS = 45 million parameters (it's big but not HUGE)
-- VITS = Easier to train than WaveNet
+Components, explained without a PhD:
 
-It's not the latest fancy model (that would be something with Transformers and diffusion), but it actually works and isn't a nightmare to train.
+- **Text Encoder**: Turns phonemes into number vectors the rest of the network can work with
+- **Posterior Encoder**: During training, looks at real audio and says "here's what this should look like" (training only, retires at inference)
+- **Flow Module**: Fancy math that makes the latent space behave properly
+- **Decoder**: Turns latent codes into mel spectrograms
+- **Adversarial Discriminator**: A second network that judges the output and tells the first network it's bad, which somehow makes the first network better. Neural peer review.
 
----
-
-## Advanced Stuff (For Masochists)
-
-Once you have basic VITS working, you could:
-
-1. **Train HiFi-GAN**: Better vocoder (Griffin-Lim sounds kinda bad)
-2. **Multi-speaker TTS**: Train on multiple speakers at once
-3. **Emotion control**: Make the robot angry, sad, or excited
-4. **Your own voice**: Record yourself, retrain (good luck sounding better than LJ)
-5. **FastSpeech2**: Make it faster (sacrificing quality)
-
-But honestly, you probably won't. You'll be satisfied that your computer can finally talk.
+Total: **~21 million parameters**. Big, but not unreasonable. Not WaveNet. We don't talk about WaveNet.
 
 ---
 
-## Real Talk (Actual Useful Info)
+## Future Improvements (Aspirational Section)
 
-- **Paper**: VITS: A Single Shot Text-to-Speech with Conditional Adversarial Networks
-- **Authors**: Seriously smart people from Korea
-- **Year**: 2021 (still relevant!)
-- **Dataset**: LJSpeech (Linda Johnson speaking 13,100 sentences)
-- **Your rig**: Will work, probably
+Once basic VITS is working, theoretically you could:
+
+1. **Train HiFi-GAN**: A proper neural vocoder. Audio quality goes up significantly. Requires more training, more GPU, more courage.
+2. **Multi-speaker TTS**: Train on multiple voices. Requires a different dataset and the willingness to suffer more.
+3. **Emotion control**: Happy robot, sad robot, very serious robot.
+4. **Your own voice**: Record ~10 hours of yourself speaking. Retrain. Become immortal (kind of).
+5. **Diffusion-based TTS**: The fancy modern way. Requires reading several papers and feeling bad about yourself first.
+
+Realistically: you'll be happy your computer can talk. That's enough. That's a victory.
 
 ---
 
-## QA: "Will You Answer My Stupid Questions?"
+## Q&A: "Will You Answer My Questions?"
 
-**Q: How long does training take?**
-A: Depends on your GPU. 3 hours to 3 days. Most people do 12-24 hours and call it good.
+**Q: How long does training take?**  
+A: 3 hours to 2 days, depending on GPU. Most people do 12–24 hours and call it done.
 
-**Q: Can I use CPU?**
-A: Technically yes. Should you? No.
+**Q: Can I use CPU?**  
+A: Technically yes. Practically, no. Do not. For the love of all that is g00d, do not.
 
-**Q: Why does my data preparation take forever?**
-A: g2p_en is slow. It's converting thousands of words to phonemes. Patience, young grasshopper.
+**Q: Why is data prep so slow?**  
+A: g2p_en is converting 13,100 sentences to phonemes. It was not built for speed. It was built for accuracy. Go make a snack.
 
-**Q: Can I interrupt training?**
-A: Yes! It saves checkpoints every N steps. Just resume later.
+**Q: Can I interrupt training?**  
+A: Yes! Checkpoints save every N steps. Resume anytime. This is not optional knowledge — your machine WILL crash eventually.
 
-**Q: Why is the audio weird after training?**
-A: Either:
+**Q: Why does my audio sound weird?**  
+A: Pick your poison: not enough training, learning rate issues, bad checkpoint, or Griffin-Lim being Griffin-Lim. Try more training first. Then adjust. Then blame the vocoder.
 
-- Not enough training (do more epochs)
-- Bad hyperparameters (adjust learning rate)
-- Corrupted checkpoint (start over)
-- Griffin-Lim vocoder limitations (use HiFi-GAN)
-
-**Q: Will this work on Mac?**
-A: Maybe! If you have an M-series chip with proper PyTorch support. Good luck though.
+**Q: Will this work on Mac?**  
+A: If you have an M-series chip with current PyTorch MPS support, maybe. Report back. We are curious and slightly concerned for you.
 
 ---
 
 ## Credits
 
-- The actual smart researchers who invented VITS
-- Linda Johnson for 13,100 recordings of sentences (what a legend)
-- You, for having the patience to read this entire README
-- Your GPU, for suffering through this with you
+- The smart researchers at KAIST who invented VITS (2021)
+- Linda Johnson, for recording 13,100 sentences at professional quality. An absolute legend.
+- PyTorch community, for making deep learning accessible to people like us
+- Your GPU, for suffering silently through all of this
+- You, for reading this far. Truly. Go train something.
 
 ---
 
 ## License
 
-MIT? Sure. Use it however you want. Make cursed TTS models. Make your alarm clock speak in a robot voice. Make a virtual assistant that sounds vaguely threatening.
+MIT. Do whatever you want. Make a TTS alarm clock that wakes you up in a robot voice. Build a virtual assistant that sounds vaguely ominous. Train it on audiobooks and confuse your friends. The possibilities are yours.
 
 ---
 
 ## Final Words
 
-Congratulations! You now have the tools to:
+Congratulations. You now have the tools to:
 
--Train VITS on your own GPU  
--Convert any text to speech (kind of)  
--Convince people your computer is sentient  
--Waste electricity impressively  
--Understand mel-spectrograms (approximately)
+Train VITS on your own GPU  
+Precompute features like someone who values their time  
+Convert any text to speech (with mild robot energy)  
+Convince people your computer is sentient  
+Waste electricity in a deeply educational way  
+Explain what a mel spectrogram is at a dinner party
 
-**Now go forth and make your GPU suffer for science!**
+**Now go forth and make your GPU suffer for science.**
 
 ---
 
-_Last updated: March 31, 2026_  
+_Last updated: April 1, 2026_  
 _GPU cooling status: CRITICAL_  
-_Electricity bill status: DO NOT OPEN_
+_Electricity bill status: DO NOT OPEN_  
+_vits_data_cached.py status: Use it. Seriously._

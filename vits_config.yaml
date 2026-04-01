@@ -78,7 +78,7 @@ scheduler_step: 1000 # Steps before decay
 scheduler_gamma: 0.999 # Decay rate per step
 
 # Batch size
-batch_size: 4
+batch_size: 4 # Adjust based on GPU memory (4 is a good starting point for RTX 3060 with 8GB VRAM)
 
 # Number of training epochs
 num_epochs: 100
@@ -89,6 +89,7 @@ grad_clip_val: 0.6 # Prevent exploding gradients
 
 # Number of workers for data loading
 num_workers: 4
+num_workers: 2 # Reduce if you encounter OOM errors during data loading
 # num_workers: 0 # Set to 0 if you encounter issues with multiprocessing on Windows
 
 # Device
@@ -117,7 +118,7 @@ loss_weight_duration: 1.0
 validation_interval: 500
 
 # Save checkpoint every N steps
-checkpoint_interval: 1000
+checkpoint_interval: 500
 
 # Keep only last N checkpoints
 max_checkpoints_keep: 5
