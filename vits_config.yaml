@@ -85,7 +85,7 @@ num_epochs: 100
 
 # Gradient clipping
 # grad_clip_val: 1.0
-grad_clip_val: 0.5 # Prevent exploding gradients
+grad_clip_val: 0.6 # Prevent exploding gradients
 
 # Number of workers for data loading
 num_workers: 4
@@ -102,8 +102,9 @@ device: "cuda" # "cuda" or "cpu"
 loss_weight_reconstruction: 1.0
 
 # Weight for KL divergence loss
-# loss_weight_kl: 0.01
-loss_weight_kl: 0.001 # Lower KL weight can help stabilize training
+# loss_weight_kl: 0.01 # Higher KL weight can lead to better latent space but may cause instability
+loss_weight_kl: 0.005 # A moderate KL weight can help balance reconstruction and latent space learning
+# loss_weight_kl: 0.001 # Lower KL weight can help stabilize training
 
 # Weight for duration loss
 loss_weight_duration: 1.0
@@ -142,8 +143,8 @@ num_samples_to_generate: 3
 # ============================================================
 
 # Mixed precision training (speeds up training on newer GPUs)
-# use_amp: true
-use_amp: false # Set to false if you encounter stability issues
+use_amp: true # Enable AMP for faster training (requires compatible GPU and PyTorch version)
+# use_amp: false # Set to false if you encounter stability issues
 
 # Number of steps to warmup learning rate (0 = no warmup)
 warmup_steps: 0

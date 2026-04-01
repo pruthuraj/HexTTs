@@ -10,8 +10,8 @@ import math
 from typing import Optional, Tuple
 
 # Standard Arpabet phoneme set size
-VOCAB_SIZE = 149
-
+# VOCAB_SIZE = 149
+from vits_data import VOCAB_SIZE
 
 class PositionalEncoding(nn.Module):
     """Positional encoding for transformer attention"""
