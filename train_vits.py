@@ -1,21 +1,21 @@
 """
 Training Script for VITS TTS Model
 Handles the complete training pipeline
+Training Script for patched VITS-like TTS model
+Fixes:
+1. real duration supervision
+2. optional NaN protection
+3. cleaner logging
 """
 
 import os
-import sys
 import yaml
-import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
-import numpy as np
 from tqdm import tqdm
-from datetime import datetime
-from pathlib import Path
 import argparse
 
 from vits_model import VITS,VOCAB_SIZE
@@ -23,7 +23,7 @@ from vits_data import create_dataloaders, get_warning_summary, reset_warning_sum
 
 
 class VITSTrainer:
-    """Trainer class for VITS model"""
+    """Trainer class for VITS model patched with text-conditioned latent prior and improved logging/warning tracking."""
     
     def __init__(self, config: dict, device: torch.device):
         self.config = config
@@ -36,6 +36,8 @@ class VITSTrainer:
         # Initialize model
         print("Initializing VITS model...")
         config['vocab_size'] = VOCAB_SIZE
+        print(f"Using vocabulary size: {config['vocab_size']}")
+        
         self.model = VITS(config).to(device)
         
         total_params = sum(p.numel() for p in self.model.parameters())
@@ -78,13 +80,14 @@ class VITSTrainer:
         self.best_val_loss = float('inf')
         self.patience_counter = 0
     
-    def compute_loss(self, outputs: dict, mel_spec: torch.Tensor, config: dict) -> dict:
+    def compute_loss(self, outputs: dict, mel_spec: torch.Tensor, mel_lengths: torch.Tensor, config: dict) -> dict:
         """
         Compute total loss
         
         Args:
             outputs: model output dict
             mel_spec: ground truth mel-spectrogram
+            mel_lengths: lengths of the mel-spectrograms
             config: config dict with loss weights
         
         Returns:
@@ -96,7 +99,18 @@ class VITSTrainer:
         mu = outputs['mu']
         logvar = outputs['logvar']
         
-        print("Duration mean:", duration.mean().item())
+        # Match predicted mel time length to target mel time length
+        if predicted_mel.size(2) != mel_spec.size(2):
+            predicted_mel = nn.functional.interpolate(
+                predicted_mel,
+                size=mel_spec.size(2),
+                mode="linear",
+                align_corners=False,
+            )
+        # Debug: print duration stats to verify they are reasonable    
+        # print("Duration mean:", duration.mean().item())
+        # print("Duration std:", duration.std().item())
+        # print("Target duration sum:", mel_lengths.float().mean().item())
         
         # 1. Reconstruction loss (L1 or MSE)
         recon_loss = nn.functional.l1_loss(predicted_mel, mel_spec, reduction='mean')
@@ -109,7 +123,16 @@ class VITSTrainer:
         
         # 3. Duration loss (not computed here as we don't have ground truth durations)
         # In a real implementation, you'd extract durations from alignments
-        duration_loss = torch.tensor(0.0, device=predicted_mel.device)
+        # duration_loss = torch.tensor(0.0, device=predicted_mel.device) # Old
+        
+        # NEW: duration supervision by matching total predicted length to mel length
+        pred_duration_sum = duration.sum(dim=1)
+        target_duration_sum = mel_lengths.float()
+        duration_loss = nn.functional.l1_loss(
+            pred_duration_sum, target_duration_sum, reduction="mean"
+        )
+        
+        
         
         # Weighted sum
         total_loss = (
@@ -129,6 +152,7 @@ class VITSTrainer:
         """Train for one epoch"""
         self.model.train()
         total_loss = 0.0
+        valid_batches = 0
         
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch + 1}")
         
@@ -147,8 +171,9 @@ class VITSTrainer:
                         mel_spec=mel_spec,
                         lengths=phoneme_lengths
                     )
-                    
-                    loss_dict = self.compute_loss(outputs, mel_spec, self.config)
+                    # Compute loss with optional NaN protection
+                    # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
+                    loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
                     loss = loss_dict['total_loss']
                     # Check for NaN or Inf loss
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -180,20 +205,23 @@ class VITSTrainer:
                 
                 # Log
                 total_loss += loss.item()
+                valid_batches += 1
                 self.global_step += 1
                 
                 if self.global_step % self.config.get('log_interval', 100) == 0:
-                    avg_loss = total_loss / (batch_idx + 1)
+                    avg_loss = total_loss / max(1, valid_batches) # Avoid division by zero
                     pbar.set_postfix({
                         'loss': f'{avg_loss:.4f}',
                         'recon': f'{loss_dict["recon_loss"]:.4f}',
                         'kl': f'{loss_dict["kl_loss"]:.4f}',
+                        "dur": f'{loss_dict["duration_loss"]:.4f}',
                     })
                     
                     # TensorBoard
                     self.writer.add_scalar('train/loss', avg_loss, self.global_step)
                     self.writer.add_scalar('train/recon_loss', loss_dict['recon_loss'], self.global_step)
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
+                    self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
                     self.writer.add_scalar('lr', self.optimizer.param_groups[0]['lr'], self.global_step)
 
                     # Print warning summary every 500 steps
@@ -209,37 +237,45 @@ class VITSTrainer:
             except Exception as e:
                 print(f"Error in batch {batch_idx}: {e}")
                 continue
+        # old 
+        # avg_epoch_loss = total_loss / len(self.train_loader)
+        # return avg_epoch_loss
+        # patched to handle potential skipped batches due to NaN loss
+        return total_loss / max(1, valid_batches) # Avoid division by zero
         
-        avg_epoch_loss = total_loss / len(self.train_loader)
-        return avg_epoch_loss
+        
     
     @torch.no_grad()
     def validate(self) -> float:
-        """Validate the model"""
         self.model.eval()
         total_loss = 0.0
-        
+        valid_batches = 0
+
         pbar = tqdm(self.val_loader, desc="Validation")
-        
+
         for batch in pbar:
-            phoneme_ids = batch['phoneme_ids'].to(self.device)
-            mel_spec = batch['mel_spec'].to(self.device)
-            phoneme_lengths = batch['phoneme_lengths'].to(self.device)
-            
+            phoneme_ids = batch["phoneme_ids"].to(self.device)
+            mel_spec = batch["mel_spec"].to(self.device)
+            phoneme_lengths = batch["phoneme_lengths"].to(self.device)
+            mel_lengths = batch["mel_lengths"].to(self.device)
+
             outputs = self.model(
                 phoneme_ids,
                 mel_spec=mel_spec,
-                lengths=phoneme_lengths
+                lengths=phoneme_lengths,
             )
-            
-            loss_dict = self.compute_loss(outputs, mel_spec, self.config)
-            total_loss += loss_dict['total_loss'].item()
-        
-        avg_loss = total_loss / len(self.val_loader)
-        
-        # TensorBoard
-        self.writer.add_scalar('val/loss', avg_loss, self.global_step)
-        
+
+            loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
+            loss = loss_dict["total_loss"]
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                continue
+
+            total_loss += loss.item()
+            valid_batches += 1
+
+        avg_loss = total_loss / max(1, valid_batches)
+        self.writer.add_scalar("val/loss", avg_loss, self.global_step)
         return avg_loss
     
     def save_checkpoint(self):
@@ -303,6 +339,7 @@ class VITSTrainer:
                     'model_state_dict': self.model.state_dict(),
                     'config': self.config,
                 }, best_path)
+                
                 print(f"New best validation loss: {val_loss:.4f} (saved to {best_path})")
             else:
                 self.patience_counter += 1

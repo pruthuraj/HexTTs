@@ -1,6 +1,12 @@
 """
 VITS Model Implementation
 Complete neural network architecture for Text-to-Speech
+Patched VITS-like model.
+
+    Main change:
+    - expanded text features are projected into latent space and used as a prior
+    - posterior latent is combined with the text prior during training
+    - inference uses text prior + small noise instead of pure random latent
 """
 
 import torch
@@ -266,6 +272,12 @@ class Decoder(nn.Module):
 class VITS(nn.Module):
     """
     Complete VITS Text-to-Speech Model
+    Patched VITS-like model.
+
+    Main change:
+    - expanded text features are projected into latent space and used as a prior
+    - posterior latent is combined with the text prior during training
+    - inference uses text prior + small noise instead of pure random latent
     
     Pipeline:
         Phoneme sequence → Text Encoder → Duration Predictor
@@ -320,6 +332,9 @@ class VITS(nn.Module):
             mel_channels=config['n_mel_channels'],
             num_layers=config['decoder_num_layers']
         )
+        
+        # NEW: project expanded text features into latent space
+        self.prior_proj = nn.Linear(config["encoder_hidden_size"], config["latent_dim"])
     
     def forward(self, phonemes: torch.Tensor, mel_spec: Optional[torch.Tensor] = None,
                 lengths: Optional[torch.Tensor] = None) -> dict:
@@ -347,19 +362,24 @@ class VITS(nn.Module):
         # Length Regulator (Expand by duration)
         expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
         
-        # Get latent codes
+        # NEW: text-conditioned latent prior
+        prior_latent = self.prior_proj(expanded)  # (batch_size, total_len, latent_dim)
+        
+        # Get latent codes from posterior encoder during training, sample from prior during inference
         if mel_spec is not None and self.training:
             # Training: use posterior encoder
-            z, mu, logvar = self.posterior_encoder(mel_spec)
+            z_post, mu, logvar = self.posterior_encoder(mel_spec)
+
+            # match text prior length to mel length
+            prior_latent = self._match_time_length(prior_latent, z_post.size(1))
+
+            # combine posterior info with text-conditioned prior
+            z = z_post + prior_latent
         else:
-            # Inference: sample from prior N(0, 1)
-            if mel_spec is None:
-                expanded_len = expanded.size(1)
-                z = torch.randn(expanded.size(0), expanded_len, self.config['latent_dim'],
-                              device=expanded.device)
-                mu, logvar = None, None
-            else:
-                z, mu, logvar = self.posterior_encoder(mel_spec)
+            # inference: use text prior + small noise instead of pure random latent
+            noise = torch.randn_like(prior_latent) * 0.3
+            z = prior_latent + noise
+            mu, logvar = None, None
         
         # Decoder: Latent → Mel-spectrogram
         predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
@@ -371,6 +391,48 @@ class VITS(nn.Module):
             'mu': mu,
             'logvar': logvar
         }
+    
+    # Inference method for generating mel-spectrogram from phonemes
+    def inference(self, phonemes: torch.Tensor, lengths: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Inference mode: phonemes → predicted mel-spectrogram
+        """
+        # Text Encoder: Phonemes → Embeddings
+        encoder_out = self.encoder(phonemes, lengths=lengths)  # (batch_size, seq_len, hidden)
+
+        # Duration Predictor
+        duration = self.duration_predictor(encoder_out)  # (batch_size, seq_len, 1)
+
+        # Length Regulator (Expand by duration)
+        expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
+
+        # NEW: text-conditioned latent prior
+        prior_latent = self.prior_proj(expanded)  # (batch_size, total_len, latent_dim)
+
+        # Sample from prior N(0, 1)
+        noise = torch.randn_like(prior_latent) * 0.3
+        z = prior_latent + noise
+        mu, logvar = None, None
+
+        # Decoder: Latent → Mel-spectrogram
+        predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
+
+        return predicted_mel
+
+    
+    @staticmethod
+    def _match_time_length(x: torch.Tensor, target_len: int) -> torch.Tensor:
+        """
+        Resize time dimension to target length.
+        x: (B, T, D) -> (B, target_len, D)
+        """
+        if x.size(1) == target_len:
+            return x
+
+        x = x.transpose(1, 2)
+        x = F.interpolate(x, size=target_len, mode="linear", align_corners=False)
+        x = x.transpose(1, 2)
+        return x
     
     @staticmethod
     def _length_regulate(x: torch.Tensor, duration: torch.Tensor) -> torch.Tensor:
@@ -393,7 +455,9 @@ class VITS(nn.Module):
         for i in range(batch_size):
             output = []
             for j in range(seq_len):
-                output.append(x[i, j].unsqueeze(0).repeat(int(duration[i,j].item()), 1))
+                # Repeat each frame according to predicted duration
+                repeat_count = max(1, int(duration[i, j].item()))
+                output.append(x[i, j].unsqueeze(0).repeat(repeat_count, 1))
             outputs.append(torch.cat(output, dim=0))
         
         # Pad to same length in batch
@@ -409,7 +473,7 @@ class VITS(nn.Module):
 if __name__ == "__main__":
     # Test the model
     config = {
-        'vocab_size': 149,
+        'vocab_size': VOCAB_SIZE,
         'encoder_hidden_size': 384,
         'encoder_num_layers': 4,
         'encoder_num_heads': 2,
@@ -426,4 +490,5 @@ if __name__ == "__main__":
     
     model = VITS(config)
     print("VITS model created successfully!")
+    print(f"VOCAB_SIZE: {VOCAB_SIZE}")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")

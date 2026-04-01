@@ -136,15 +136,15 @@ tensorboard --logdir=./logs
 
 ---
 
-## Inference: "Let Me Hear My Robot" 
+## Inference: "Let Me Hear My Robot"
 
 ### Single Command:
 
 ```bash
-python inference_vits.py \
-  --checkpoint checkpoints/best_model.pt \
-  --config vits_config.yaml \
-  --text "Hello, I am a robot overlord" \
+python inference_vits.py `
+  --checkpoint checkpoints/best_model.pt `
+  --config vits_config.yaml `
+  --text "Hello, I am a robot overlord" `
   --output hello.wav
 ```
 
@@ -216,7 +216,7 @@ The Griffin-Lim vocoder is slower than your GPU. Welcome to life.
 
 ---
 
-## The Deep Dive: "But How Does It Actually Work?" 
+## The Deep Dive: "But How Does It Actually Work?"
 
 ### Phase 1: Text → Phonemes
 
