@@ -21,7 +21,7 @@ import argparse
 from vits_model import VITS,VOCAB_SIZE
 # from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
 # Patched to use cached dataloader with warning tracking
-from vits_data_cached import create_dataloaders, get_warning_summary, reset_warning_summary
+from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
 
 class VITSTrainer:
     """Trainer class for VITS model patched with text-conditioned latent prior and improved logging/warning tracking."""

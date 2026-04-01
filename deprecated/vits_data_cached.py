@@ -1,11 +1,9 @@
 """
 Cached feature dataloader for faster VITS training.
 
-Patched features:
-- loads precomputed mel spectrograms and phoneme IDs
-- filters long samples using max_seq_length
-- sorts kept samples by mel length to reduce padding waste
-- keeps warning summary support
+This version loads:
+- precomputed mel spectrograms from .npy
+- precomputed phoneme IDs from .npy
 
 Expected cache layout:
 <data_dir>/cache/mels/<filename>.npy
@@ -34,7 +32,6 @@ VOCAB_SIZE = len(PHONEME_TO_ID)
 
 WARNING_STATS = {
     "missing_cache": defaultdict(int),
-    "skipped_too_long": defaultdict(int),
 }
 
 # Functions to record and summarize warnings during dataset loading
@@ -51,72 +48,35 @@ def reset_warning_summary():
     for category in WARNING_STATS:
         WARNING_STATS[category].clear()
 
-# Dataset class that loads precomputed mel spectrograms and phoneme IDs, with filtering and sorting
+
 class TTSCachedDataset(Dataset):
-    def __init__(self, metadata_file: str, data_dir: str, max_seq_length=None):
+    def __init__(self, metadata_file: str | Path, data_dir: str | Path):
         self.data_dir = Path(data_dir)
         self.cache_mels = self.data_dir / "cache" / "mels"
         self.cache_ids = self.data_dir / "cache" / "ids"
-        self.max_seq_length = max_seq_length
 
-        self.samples = []
-        skipped_missing = 0
-        skipped_too_long = 0
-
+        self.metadata = []
         with open(metadata_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-
                 parts = line.split("|", 1)
-                if len(parts) != 2:
-                    continue
-
-                filename, _ = parts
-
-                mel_path = self.cache_mels / f"{filename}.npy"
-                ids_path = self.cache_ids / f"{filename}.npy"
-
-                if not mel_path.exists() or not ids_path.exists():
-                    skipped_missing += 1
-                    record_warning("missing_cache", filename)
-                    continue
-
-                try:
-                    # Load mel spectrogram in memory-mapped mode to get its length without loading the entire array
-                    mel = np.load(mel_path, mmap_mode="r")
-                    mel_len = int(mel.shape[1])
-
-                    if self.max_seq_length is not None and mel_len > self.max_seq_length:
-                        skipped_too_long += 1
-                        record_warning("skipped_too_long", filename)
-                        continue
-
-                    self.samples.append({
-                        "filename": filename,
-                        "mel_len": mel_len,
-                    })
-                except Exception:
-                    skipped_missing += 1
-                    record_warning("missing_cache", filename)
-
-        self.samples.sort(key=lambda x: x["mel_len"])
-
-        print(f"Loaded cached dataset from {metadata_file}")
-        print(f"  Kept samples: {len(self.samples)}")
-        print(f"  Skipped missing/bad cache: {skipped_missing}")
-        print(f"  Skipped too long: {skipped_too_long}")
+                if len(parts) == 2:
+                    filename, _ = parts
+                    self.metadata.append(filename)
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.metadata)
 
     def __getitem__(self, idx: int):
-        sample = self.samples[idx]
-        filename = sample["filename"]
-
+        filename = self.metadata[idx]
         mel_path = self.cache_mels / f"{filename}.npy"
         ids_path = self.cache_ids / f"{filename}.npy"
+
+        if not mel_path.exists() or not ids_path.exists():
+            record_warning("missing_cache", filename)
+            raise FileNotFoundError(f"Missing cached feature for {filename}")
 
         mel_spec = np.load(mel_path)
         phoneme_ids = np.load(ids_path)
@@ -127,7 +87,7 @@ class TTSCachedDataset(Dataset):
             "phoneme_ids": torch.LongTensor(phoneme_ids),
         }
 
-
+# Collate function to pad sequences in a batch
 def collate_fn_vits(batch: List[dict]) -> dict:
     filenames = [item["filename"] for item in batch]
     phoneme_ids = [item["phoneme_ids"] for item in batch]
@@ -154,21 +114,12 @@ def collate_fn_vits(batch: List[dict]) -> dict:
         "mel_lengths": mel_lengths,
     }
 
-
+# For training, we want to load the entire dataset and sort by mel length for efficient batching.
 def create_dataloaders(config: dict, batch_size: int, num_workers: int = 0) -> Tuple[DataLoader, DataLoader]:
     data_dir = config["data_dir"]
-    max_seq_length = config.get("max_seq_length", None)
 
-    train_set = TTSCachedDataset(
-        os.path.join(data_dir, "train.txt"),
-        data_dir,
-        max_seq_length=max_seq_length,
-    )
-    val_set = TTSCachedDataset(
-        os.path.join(data_dir, "val.txt"),
-        data_dir,
-        max_seq_length=max_seq_length,
-    )
+    train_set = TTSCachedDataset(os.path.join(data_dir, "train.txt"), data_dir)
+    val_set = TTSCachedDataset(os.path.join(data_dir, "val.txt"), data_dir)
 
     print(f"Training set size: {len(train_set)}")
     print(f"Validation set size: {len(val_set)}")
@@ -176,7 +127,7 @@ def create_dataloaders(config: dict, batch_size: int, num_workers: int = 0) -> T
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=True,
         collate_fn=collate_fn_vits,
         num_workers=num_workers,
         pin_memory=True,
