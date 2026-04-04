@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard.writer import SummaryWriter
+from utils.sample_generation import generate_samples
 from torch.amp.grad_scaler import GradScaler
 from tqdm import tqdm
 import argparse
@@ -22,6 +23,12 @@ from vits_model import VITS,VOCAB_SIZE
 # from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
 # Patched to use cached dataloader with warning tracking
 from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
+
+# Sample texts for validation generation (can be customized)
+SAMPLE_TEXTS = [
+    "Hello, I am HexTTS. This is a training sample.",
+    "Neural text to speech is learning step by step.",
+]
 
 class VITSTrainer:
     """Trainer class for VITS model patched with text-conditioned latent prior and improved logging/warning tracking."""
@@ -349,6 +356,22 @@ class VITSTrainer:
             # Validate
             val_loss = self.validate()
             print(f"Epoch {epoch + 1}/{num_epochs} - Validation loss: {val_loss:.4f}")
+            
+            # Generate audio samples every 5 epochs
+            if (epoch + 1) % 5 == 0:
+                try:
+                    generate_samples(
+                        model=self.model,
+                        texts=SAMPLE_TEXTS,
+                        text_to_sequence_fn=lambda t: [ord(c) % self.config['vocab_size'] for c in t],
+                        output_dir="samples",
+                        epoch=epoch + 1,
+                        device=self.device.type,
+                        sample_rate=self.config.get("sample_rate", 22050),
+                    )
+                    print(f"Saved audio samples for epoch {epoch + 1}")
+                except Exception as e:
+                    print(f"Sample generation failed: {e}")
             
             # Learning rate schedule
             if self.scheduler:

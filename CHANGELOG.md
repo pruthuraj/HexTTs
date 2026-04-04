@@ -7,7 +7,7 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ## [v0.3.2] - 2026-04-04
 
-### Fixed
+### Fixed and Added generate_samples
 
 - Training **no longer gaslights you** by pretending it restarted from epoch 1.  
   Checkpoint resume now behaves like a responsible adult.
@@ -26,6 +26,9 @@ All notable GPU temperature increases are documented in your electricity bill.
   - Explicitly documents that checkpoints contain complex Python objects
 - **Fixed context manager issue** in mixed precision training
   - Forward/backward passes now correctly apply (or don't apply) mixed precision
+- **Fixed device parameter type** in sample generation
+  - `generate_samples()` now receives device as string (`self.device.type`) instead of torch.device object
+  - Prevents type mismatch errors during audio sample generation at inference time
 
 ### Added
 
