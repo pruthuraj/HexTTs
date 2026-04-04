@@ -1,357 +1,425 @@
-# Phase 3: Quick Start Guide
+# Phase 3: Training, Monitoring, and Inference
 
-## Training VITS and Generating Speech
+## VITS TTS Project
 
----
+This phase covers the current training workflow for the project.
 
-## 📁 Files You Need
+It includes:
 
-Download these 8 files and place them in your `VITS_TTS/` folder:
-
-**Configuration:**
-
-- `vits_config.yaml` - Training parameters
-
-**Model Code:**
-
-- `vits_model.py` - VITS neural network
-- `vits_data.py` - Data loading
-- `train_vits.py` - Training script
-
-**Inference:**
-
-- `inference_vits.py` - Generate speech from text
-- `tts_app.py` - Interactive TTS application
+- starting training
+- using the cached loader
+- monitoring progress
+- resuming from checkpoints
+- generating speech
+- handling common failures based on the current patches
 
 ---
 
-## 🚀 Quick Start: 3 Commands
+## 1. Files Required
 
-### Command 1: Start Training
+Make sure these files exist in the project root:
+
+```text
+vits_config.yaml
+vits_model.py
+vits_data.py
+vits_data_cached.py
+train_vits.py
+inference_vits.py
+tts_app.py
+precompute_features.py
+```
+
+Also make sure the prepared data exists:
+
+```text
+data/ljspeech_prepared/
+├── train.txt
+├── val.txt
+├── metadata.json
+└── cache/
+```
+
+---
+
+## 2. Final Pre-Training Checklist
+
+Before training, confirm:
+
+- metadata contains phonemes, not raw words
+- cached features are already generated
+- `train_vits.py` imports `vits_data_cached`
+- `vits_model.py` imports `VOCAB_SIZE` from dataset code
+- your config is suitable for RTX 3050 Ti
+
+Recommended config:
+
+```yaml
+batch_size: 4
+num_workers: 0
+use_amp: true
+grad_clip_val: 0.5
+max_seq_length: 300
+pin_memory: true
+```
+
+---
+
+## 3. Start Training
+
+Activate environment:
 
 ```bash
-# Activate environment
 venv\Scripts\activate
+```
 
-# Train the model
+Start training:
+
+```bash
 python train_vits.py --config vits_config.yaml --device cuda
 ```
 
-**Expected output:**
+Typical startup flow:
 
-```
+```text
 Loading config from vits_config.yaml
-Using GPU: NVIDIA GeForce RTX 3060
+Using device: cuda
 Initializing VITS model...
-Total parameters: 45.32M
-
-Training set size: 12445
-Validation set size: 655
-
-Starting training for 100 epochs...
-
-Epoch 1/100 - Training loss: 2.3451
-Epoch 1/100 - Validation loss: 2.1234
+Loading cached dataset...
+Starting training...
 ```
-
-**Training time:**
-
-- First results: 1-2 hours
-- Good quality: 8-12 hours
-- Excellent: 20-24 hours
 
 ---
 
-### Command 2: Monitor Training
+## 4. What the Cached Loader Changes
 
-While training is running, open another command prompt:
+The current training flow should use `vits_data_cached.py`.
+
+Benefits:
+
+- faster epochs because mels and IDs are precomputed
+- less CPU overhead
+- better padding efficiency because samples are sorted by length
+- fewer OOM crashes because very long samples can be filtered
+- better visibility through initialization logs
+
+Typical loader behavior now includes:
+
+- keep valid cached samples
+- skip corrupted or missing cache
+- skip samples longer than `max_seq_length`
+- report counts for kept and skipped samples
+
+If the skipped-too-long count is very high, increase `max_seq_length` carefully.
+
+---
+
+## 5. Monitor Training with TensorBoard
+
+Open a second terminal and run:
 
 ```bash
-# In a new terminal (with venv activated)
 tensorboard --logdir=./logs
 ```
 
-Then open http://localhost:6006 in your web browser to see:
+Then open:
 
-- Loss curves (training vs validation)
-- Loss breakdown (reconstruction, KL, duration)
-- Learning rate changes
+```text
+http://localhost:6006
+```
+
+Track:
+
+- total loss
+- reconstruction loss
+- KL loss
+- validation loss
+- learning rate
+
+Healthy training usually means:
+
+- train loss decreases
+- validation loss also decreases or stays stable
+- metrics do not become NaN
 
 ---
 
-### Command 3: Generate Speech
+## 6. Expected Training Timeline
 
-After training completes, generate speech:
+Very rough expectation:
 
-**Command-line mode:**
+| Time        | Result                     |
+| ----------- | -------------------------- |
+| 1–2 hours   | very rough / robotic audio |
+| 6–8 hours   | understandable speech      |
+| 12–24 hours | much better quality        |
+| beyond that | incremental improvements   |
 
-```bash
-python inference_vits.py \
-  --checkpoint checkpoints/best_model.pt \
-  --config vits_config.yaml \
-  --text "Hello, this is my AI voice" \
-  --output hello.wav
+With an **RTX 3050 Ti**, training will be slower than larger GPUs. Cached loading helps, but it does not magically remove the cost of training.
+
+---
+
+## 7. Checkpoints
+
+Training should save checkpoints in:
+
+```text
+checkpoints/
+├── best_model.pt
+├── checkpoint_step_1000.pt
+├── checkpoint_step_2000.pt
+└── ...
 ```
 
-**Interactive mode:**
+Use `best_model.pt` for inference unless you want to test a specific checkpoint.
+
+---
+
+## 8. Resume Training
+
+If training stops or crashes, resume from a checkpoint:
+
+```bash
+python train_vits.py --config vits_config.yaml --checkpoint checkpoints/checkpoint_step_5000.pt
+```
+
+Notes:
+
+- resuming is fine for normal interruptions
+- do **not** continue from old checkpoints created before the bad metadata fix
+- if your earlier run was trained on raw-word metadata instead of clean phonemes, start a fresh run
+
+---
+
+## 9. Generate Speech from a Trained Model
+
+Single command inference:
+
+```bash
+python inference_vits.py --checkpoint checkpoints/best_model.pt --config vits_config.yaml --text "Hello I am Pruthu" --output hello.wav
+```
+
+Output file:
+
+```text
+hello.wav
+```
+
+If your project writes outputs into `tts_output/`, check there as well.
+
+---
+
+## 10. Interactive TTS Mode
+
+Run:
 
 ```bash
 python tts_app.py --checkpoint checkpoints/best_model.pt
 ```
 
-Then type:
+Example:
 
-```
+```text
 > hello world
-> save My name is VITS
+> save this is my neural voice
 > exit
 ```
 
----
-
-## 📊 Training Process
-
-### What Happens
-
-```
-Epoch 1: Loss 2.34 → Model learning random patterns
-Epoch 10: Loss 0.95 → Getting better
-Epoch 50: Loss 0.25 → Good speech quality
-Epoch 100: Loss 0.12 → Excellent speech quality
-```
-
-### Key Metrics
-
-| Metric     | Good         | Bad           |
-| ---------- | ------------ | ------------- |
-| Train loss | Decreasing ↓ | Constant or ↑ |
-| Val loss   | Decreasing ↓ | Increasing ↑  |
-| Recon loss | 0.1-0.4      | > 1.0         |
-| KL loss    | 0.001-0.01   | 0 or > 0.1    |
+This is useful for quick manual tests without editing shell commands repeatedly.
 
 ---
 
-## 🛠️ Configuration: GPU Memory
+## 11. Interpreting Bad Output
 
-**If you run out of memory (OOM error):**
+If the audio output is trash, extremely short, or not even close to speech, check these first:
 
-Edit `vits_config.yaml`:
+### A. Was the metadata fixed?
+
+Your `train.txt` must contain phonemes, not words.
+
+Correct:
+
+```text
+LJ001-0001|DH AH ...
+```
+
+Wrong:
+
+```text
+LJ001-0001|THE PROJECT ...
+```
+
+### B. Was vocab size fixed?
+
+The model must import vocabulary size from dataset code, not use a hardcoded number.
+
+Correct:
+
+```python
+from vits_data import VOCAB_SIZE
+```
+
+Wrong:
+
+```python
+VOCAB_SIZE = 149
+```
+
+### C. Are you testing an old bad checkpoint?
+
+If the checkpoint was produced before the metadata cleanup or vocabulary consistency fix, do not trust it.
+
+### D. Has the model trained long enough?
+
+Early checkpoints often sound very bad. That is normal.
+
+---
+
+## 12. Common Problems and Fixes
+
+### CUDA out of memory
+
+Reduce batch size:
 
 ```yaml
-# For 6 GB VRAM (RTX 3060):
-batch_size: 8  # reduced from 16
-
-# For 12 GB VRAM (RTX 3060 Ti):
-batch_size: 16
-
-# For 24+ GB VRAM (RTX 4090):
-batch_size: 32
+batch_size: 2
 ```
 
-Save and restart training.
+You can also lower `max_seq_length` a bit, but be careful not to discard too much useful data.
 
 ---
 
-## 📂 Output Structure
+### Loss becomes NaN
 
-After training:
-
-```
-VITS_TTS/
-├── checkpoints/
-│   ├── best_model.pt            ← Use this for inference
-│   ├── checkpoint_step_001000.pt
-│   └── checkpoint_step_002000.pt
-├── logs/
-│   └── events.out.tfevents.xxx  ← TensorBoard logs
-└── tts_output/                  ← Generated audio files
-    ├── tts_0.wav
-    ├── tts_1.wav
-    └── ...
-```
-
----
-
-## 🎯 Common Issues
-
-### Issue: CUDA out of memory
-
-```
-RuntimeError: CUDA out of memory
-```
-
-**Fix:** Reduce `batch_size` in vits_config.yaml (8, 4, or 2)
-
-### Issue: Loss not decreasing
-
-**Cause:** Learning rate too high
-**Fix:** Change in vits_config.yaml:
+Try:
 
 ```yaml
-learning_rate: 0.001 # reduced from 0.002
+learning_rate: 0.001
+grad_clip_val: 0.5
 ```
 
-### Issue: Generated audio is robotic
+Also verify:
 
-**Cause:** Need more training
-**Fix:** Increase num_epochs to 100-200
-
-### Issue: "ModuleNotFoundError: No module named 'vits_model'"
-
-**Fix:** Make sure all .py files are in the same folder
+- cache is valid
+- no corrupted samples slipped through
+- metadata is clean
 
 ---
 
-## ⏱️ Timeline
+### Training is slow even after caching
 
-### Hour 1-2: First Training Iteration
+Check all of the following:
 
-- Model learns basic phoneme to sound mapping
-- Audio will sound very robotic
-- Loss drops rapidly
-
-### Hour 6-8: Good Results
-
-- Speech is intelligible
-- Most phonemes correct
-- Some artifacts remain
-
-### Hour 12-24: Excellent Results
-
-- Natural-sounding speech
-- Minimal artifacts
-- Good prosody and timing
+- did you actually run `precompute_features.py`
+- does `data/ljspeech_prepared/cache/` contain `.npy` files
+- does `train_vits.py` import `vits_data_cached`
+- is `use_amp: true`
+- is the GPU being used
 
 ---
 
-## 🔄 Resume Training
+### Unknown phoneme warnings are still huge
 
-If training crashes or is interrupted:
+That usually means preprocessing is still wrong.
+
+Regenerate the prepared dataset:
 
 ```bash
-# List available checkpoints
-dir checkpoints/
-
-# Resume from checkpoint
-python train_vits.py --config vits_config.yaml --checkpoint checkpoints/checkpoint_step_005000.pt
+python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
 ```
 
+Then inspect `train.txt` manually.
+
 ---
 
-## 📝 Typical Training Session
+### Too many samples are skipped
+
+The cached loader can skip samples that exceed `max_seq_length`.
+
+If the logs show a large skipped-too-long count, raise:
+
+```yaml
+max_seq_length: 500
+```
+
+or another careful value based on your data and VRAM.
+
+---
+
+## 13. Suggested Training Workflow
+
+Use this order:
+
+### Step 1
 
 ```bash
-# 1. Activate environment
 venv\Scripts\activate
+```
 
-# 2. In Terminal 1: Start training
+### Step 2
+
+```bash
+python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
+```
+
+### Step 3
+
+```bash
+python precompute_features.py --config vits_config.yaml
+```
+
+### Step 4
+
+Confirm:
+
+- cached loader is imported
+- vocab size is not hardcoded
+
+### Step 5
+
+```bash
 python train_vits.py --config vits_config.yaml --device cuda
+```
 
-# 3. In Terminal 2: Monitor with TensorBoard
+### Step 6
+
+```bash
 tensorboard --logdir=./logs
-# Open http://localhost:6006
+```
 
-# 4. After ~12 hours, training finishes
-# Model saved to checkpoints/best_model.pt
+### Step 7
 
-# 5. In Terminal 3: Test the model
-python tts_app.py --checkpoint checkpoints/best_model.pt
-# Type: > hello world
-# Audio saved to tts_output/tts_0.wav
+After a useful checkpoint exists:
+
+```bash
+python inference_vits.py --checkpoint checkpoints/best_model.pt --config vits_config.yaml --text "Hello I am Pruthu" --output hello.wav
 ```
 
 ---
 
-## ✅ Verification Checklist
+## 14. What Success Looks Like
 
-- [ ] All 8 files downloaded to VITS_TTS folder
-- [ ] Training starts without errors
-- [ ] GPU is being used (check with nvidia-smi)
-- [ ] Loss decreases each epoch
-- [ ] TensorBoard shows loss curves
-- [ ] Training completes (or can be resumed)
-- [ ] best_model.pt exists in checkpoints/
-- [ ] Inference generates audio file
-- [ ] Generated audio is intelligible
+A good Phase 3 result means:
 
----
-
-## 🎓 What's Actually Happening
-
-**Training:**
-
-1. Model gets phoneme sequence
-2. Predicts mel-spectrogram
-3. Compares to real mel-spectrogram
-4. Calculates error (loss)
-5. Updates weights to reduce error
-6. Repeats 10,000+ times
-7. Model learns to convert text → speech
-
-**Inference:**
-
-1. Your text → Phonemes
-2. Phonemes → Mel-spectrogram (using trained model)
-3. Mel-spectrogram → Audio (using Griffin-Lim)
-4. Audio saved to .wav file
+- training runs without crashes
+- checkpoint files are created
+- losses trend downward
+- TensorBoard logs appear
+- generated audio is at least intelligible
+- later checkpoints sound better than earlier ones
 
 ---
 
-## 📞 Help & Troubleshooting
+## 15. Next Improvements After Basic Training
 
-**Common Questions:**
+Once the current pipeline works reliably, future upgrades can include:
 
-Q: How long should I train?
-A: Start with 10 epochs (1-2 hours), then decide. 50+ epochs for good quality.
+- better vocoder than Griffin-Lim
+- multi-speaker support
+- cleaner inference pipeline
+- more robust evaluation scripts
+- stronger README demos and sample outputs
 
-Q: Can I stop and resume?
-A: Yes, use --checkpoint with the latest checkpoint file.
+For now, the goal is simple:
 
-Q: What GPU do I need?
-A: 6GB minimum (RTX 3060). Faster with 12GB+.
-
-Q: Can I use CPU?
-A: Yes (--device cpu) but training takes 5-10x longer.
-
-Q: Why is audio quality bad?
-A: Model needs more training. Train for more epochs.
-
-Q: Can I use my own voice?
-A: Yes (advanced). Record ~1 hour, prepare metadata, retrain.
-
----
-
-## 🚀 Next Level (Advanced)
-
-Once you have basic VITS working:
-
-1. **Better Vocoder:** Train HiFi-GAN instead of Griffin-Lim
-2. **Multi-speaker:** Train on multiple speakers
-3. **FastSpeech2:** For faster inference
-4. **Emotion Control:** Add emotion tokens
-5. **Your Own Voice:** Collect speaker data and retrain
-
----
-
-## 📚 Key Files Reference
-
-| File              | What to do              | When                  |
-| ----------------- | ----------------------- | --------------------- |
-| vits_config.yaml  | Edit hyperparameters    | Before training       |
-| train_vits.py     | Run with --checkpoint   | Resume training       |
-| inference_vits.py | Run with --text         | Generate single audio |
-| tts_app.py        | Run for interactive use | After training        |
-| tensorboard       | Point to ./logs         | While training        |
-
----
-
-## ✨ You're Ready!
-
-You now have everything needed to:
-
-1. ✅ Train VITS on your GPU
-2. ✅ Monitor training progress
-3. ✅ Generate speech from text
-4. ✅ Use interactive TTS app
-
-**Start training now and check back in a few hours!** 🚀
+**stable training + correct data + usable speech output**.

@@ -5,6 +5,73 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.3.2] - 2026-04-04
+
+### Fixed
+
+- Training **no longer gaslights you** by pretending it restarted from epoch 1.  
+  Checkpoint resume now behaves like a responsible adult.
+- Eliminated the **VOCAB_SIZE existential crisis** by aligning model vocabulary with dataset phoneme vocabulary.
+- Cached dataloader behavior improved so sequence handling is now **predictable instead of chaotic neutral**.
+- **PyTorch 2.x future-proofed** by migrating from deprecated `torch.cuda.amp` API to new `torch.amp` API
+  - Updated `autocast()` to use new API with device-type specification
+  - Updated `GradScaler()` to use new API with device-type parameter
+  - Eliminates FutureWarning spam (and ensures compatibility when old API is removed)
+- **GradScaler state now persisted** across checkpoint saves/resumes
+  - GradScaler internal state (loss scale, overflow counts) saved to checkpoint
+  - Restored on resume, preventing gradient instability when continuing training
+  - Ensures multi-day training runs remain stable across checkpoint boundaries
+- **Hardened torch.load()** with explicit `weights_only=False` parameter
+  - Suppresses FutureWarning in modern PyTorch versions
+  - Explicitly documents that checkpoints contain complex Python objects
+- **Fixed context manager issue** in mixed precision training
+  - Forward/backward passes now correctly apply (or don't apply) mixed precision
+
+### Added
+
+- Cached feature workflow using:
+  - precomputed **mel spectrograms**
+  - cached **phoneme ID files**
+
+  This means your GPU now spends more time training and less time **waiting for audio preprocessing to finish its coffee break**.
+
+- Better documentation for dataset preparation so future-you doesn't ask  
+  _“Why is everything broken?”_
+
+- New patch notes covering:
+  - vocabulary size consistency
+  - cached dataloader speed improvements
+  - training pipeline updates
+
+### Improved
+
+- Training performance on **low-VRAM GPUs (hello RTX 3050 Ti gang)** by adding support for:
+  - cached mel loading
+  - cached phoneme ID loading
+  - max sequence length filtering
+  - length-based sample sorting
+
+  Result: **less GPU suffering, fewer CUDA tantrums.**
+
+- Practical configuration guidance for **RTX 3050 Ti 4GB** so the GPU survives the training process.
+
+- Clearer recommended training ritual:
+  - Step 1: Validate raw dataset
+  - Step 2: Prepare phoneme metadata
+  - Step 3: Precompute cached features
+  - Step 4: Train model
+  - Step 5: Resume training without emotional damage
+
+### Developer Emotional Status
+
+Stable but cautious.
+
+### GPU Emotional Status
+
+Still judging you.
+
+---
+
 # v0.3.1 — The "Stop Feeding Your GPU Nonsense" Patch
 
 ## Fixed / Improved in `vits_data_cached.py`

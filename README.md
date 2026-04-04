@@ -1,5 +1,7 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
+_v0.3.2_
+
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 
 ---
@@ -10,7 +12,9 @@ HexTTs is a **Text-to-Speech (TTS)** project that teaches an AI neural network t
 
 - **Trained on**: 13,100 audio clips of a very patient woman (LJSpeech dataset)
 - **Powers**: The ability to type "hello world" and actually hear your computer SAY it
-- **Side effects**: Your GPU fans will sound like a jet engine, your electricity bill will cry, and you'll start explaining mel-spectrograms at parties
+- **Side effects**: Your GPU fans will sound like a jet engine, your electricity bill will cry, and you'll start explaining mel-spectrograms at parties.
+
+Let's pivot our eyeballs toward the _\diagram and \doc_ to synergize our confusion into a cohesive misunderstanding
 
 ---
 
@@ -25,16 +29,26 @@ HexTTs/
 ├── vits_model.py              ← The neural network brain (45 million parameters btw)
 ├── vits_data.py               ← Data loading (it's surprisingly boring)
 ├── vits_data_cached.py        ← Data loading, but make it fast (new and improved suffering)
+├── view_spectrogram.py        ← Visualize mel spectrograms (stare at pretty graphs)
 │
 ├── vits_config.yaml           ← "How angry should my GPU get?"
+├── requirements.txt           ← All the suffering, listed as pip packages
+├── CHANGELOG.md               ← A record of your poor decision-making over time
 │
 ├── prepare_data.py            ← "Let me fix the phonemes because the dataset was messy"
 ├── validate_dataset.py        ← Quality control (spoiler: data is weird)
 ├── precompute_features.py     ← Computes mel spectrograms ahead of time so training doesn't die slowly
+├── test_setup.py              ← Sanity check that all your dependencies installed correctly
 │
 ├── checkpoints/               ← Model snapshots (save the good ones, delete the tragic ones)
 ├── logs/                      ← TensorBoard metrics (watch your loss go brrr)
 ├── tts_output/                ← The fruits of your GPU's labor
+│
+├── diagram/                   ← Visual documentation (pretty pictures of data flow)
+├── doc/                       ← Extra documentation you'll read later (spoiler: you won't)
+├── notes/                     ← Patch notes, setup guides, lessons learned the hard way
+├── deprecated/                ← Old code graveyard (abandon hope, all ye who enter here)
+├── scripts/                   ← Miscellaneous utility scripts (your personal junk drawer)
 │
 └── data/
     ├── LJSpeech-1.1/          ← 13,100 voice samples (24GB of pure audio patience)
@@ -145,7 +159,7 @@ from vits_data_cached import create_dataloaders
 ## Training: "Let's Make Your Room Hot"
 
 ```bash
-# Start training (go get coffee, you'll be here a while)
+# Start training (go get a date live your life or touch grass , it will take a while depending on your config)
 python train_vits.py --config vits_config.yaml --device cuda
 ```
 
@@ -194,15 +208,15 @@ tensorboard --logdir=./logs
 
 ---
 
-## Inference: "Let Me Hear My Robot" 🎵
+## Inference: "Let Me Hear My Robot"
 
 ### Single Command:
 
 ```bash
-python inference_vits.py \
-  --checkpoint checkpoints/best_model.pt \
-  --config vits_config.yaml \
-  --text "Hello I am Pruthu" \
+python inference_vits.py `
+  --checkpoint checkpoints/best_model.pt `
+  --config vits_config.yaml `
+  --text "Hello I am Pruthu" `
   --output hello.wav
 ```
 
@@ -234,8 +248,8 @@ If your training gets interrupted (power cut, GPU tantrum, cat walked on keyboar
 dir checkpoints/
 
 # Resume from the latest
-python train_vits.py \
-  --config vits_config.yaml \
+python train_vits.py `
+  --config vits_config.yaml `
   --checkpoint checkpoints/checkpoint_step_5000.pt
 ```
 
@@ -295,6 +309,18 @@ Did you actually swap `vits_data` to `vits_data_cached` in `train_vits.py`? Go l
 | `prepare_data.py`        | Converts transcripts to phonemes                 | Once, then forget it            |
 | `validate_dataset.py`    | "Is my data okay?"                               | When paranoid                   |
 | `precompute_features.py` | Pre-bakes mel spectrograms                       | Before training (do this)       |
+| `view_spectrogram.py`    | Visualize mel spectrograms                       | When debugging audio issues     |
+| `test_setup.py`          | Verify PyTorch/CUDA installed correctly          | On first setup                  |
+| `requirements.txt`       | All your dependencies                            | During pip install              |
+| `CHANGELOG.md`           | What changed between versions                    | When things break mysteriously  |
+| `checkpoints/`           | Saved model states                               | Always (precious cargo)         |
+| `logs/`                  | TensorBoard event files                          | During/after training           |
+| `tts_output/`            | Generated audio files                            | After inference                 |
+| `diagram/`               | Architecture diagrams and flowcharts             | When explaining to others       |
+| `doc/`                   | Extended documentation                           | When README isn't enough        |
+| `notes/`                 | Development notes, patches, and lessons learned  | When troubleshooting            |
+| `deprecated/`            | Old code nobody knows how to delete              | Never (for archaeologists only) |
+| `scripts/`               | Utility scripts and helper tools                 | When needed, god help you       |
 
 ---
 
@@ -365,6 +391,12 @@ Realistically: you'll be happy your computer can talk. That's enough. That's a v
 
 ## Q&A: "Will You Answer My Questions?"
 
+**Q: Did I use AI?**
+A: Yes… but only for the serious document in the /docs folder and the connments.
+
+The funny parts?
+That was 100% human intelligence.
+
 **Q: How long does training take?**  
 A: 3 hours to 2 days, depending on GPU. Most people do 12–24 hours and call it done.
 
@@ -375,7 +407,7 @@ A: Technically yes. Practically, no. Do not. For the love of all that is g00d, d
 A: g2p_en is converting 13,100 sentences to phonemes. It was not built for speed. It was built for accuracy. Go make a snack.
 
 **Q: Can I interrupt training?**  
-A: Yes! Checkpoints save every N steps. Resume anytime. This is not optional knowledge — your machine WILL crash eventually.
+A: Yes! Checkpoints save every N steps. Resume anytime. This is not optional knowledge — your machine WILL suicide at some point.
 
 **Q: Why does my audio sound weird?**  
 A: Pick your poison: not enough training, learning rate issues, bad checkpoint, or Griffin-Lim being Griffin-Lim. Try more training first. Then adjust. Then blame the vocoder.
@@ -416,7 +448,7 @@ Explain what a mel spectrogram is at a dinner party
 
 ---
 
-_Last updated: April 1, 2026_  
+_Last updated: April 4, 2026_  
 _GPU cooling status: CRITICAL_  
 _Electricity bill status: DO NOT OPEN_  
 _vits_data_cached.py status: Use it. Seriously._

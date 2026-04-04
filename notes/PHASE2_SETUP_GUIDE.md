@@ -1,367 +1,385 @@
-# Phase 2: Setup & Dataset Preparation
-## Complete Windows Guide
+# Phase 2: Setup, Data Preparation, and Cache Pipeline
+
+## VITS TTS Project
+
+This phase prepares the full training pipeline for the current version of the project.
+
+It covers:
+
+- environment setup
+- GPU verification
+- dataset download and validation
+- phoneme-clean metadata generation
+- cached feature generation for faster training
+- sanity checks before training
+
+This guide matches the current project state, including:
+
+- clean phoneme metadata
+- vocabulary consistency
+- cached mel / ID features
+- RTX 3050 Ti friendly settings
 
 ---
 
-## Prerequisites
-- Windows 10/11
-- NVIDIA GPU with CUDA support
-- Python 3.9 or 3.10 (3.11+ may have compatibility issues)
-- ~50 GB free disk space (LJSpeech is 24 GB)
-- Command Prompt or PowerShell
+## 1. System Requirements
+
+Recommended setup:
+
+| Component  | Requirement                           |
+| ---------- | ------------------------------------- |
+| OS         | Windows 10 / 11                       |
+| Python     | 3.9 or 3.10                           |
+| GPU        | NVIDIA RTX 3050 Ti (4GB VRAM)         |
+| CUDA       | 11.8 or compatible PyTorch CUDA build |
+| Disk Space | ~50 GB free                           |
+| Dataset    | LJSpeech 1.1                          |
+
+Notes:
+
+- LJSpeech contains **13,100** audio clips.
+- Cached training needs extra disk space because mel spectrograms and phoneme IDs are stored as `.npy` files.
 
 ---
 
-## Step 1: Verify GPU Setup (5 minutes)
+## 2. Verify GPU Setup
 
-### Check NVIDIA Driver
-Open Command Prompt and run:
+Open Command Prompt or PowerShell and run:
+
 ```bash
 nvidia-smi
 ```
 
-You should see:
-```
-NVIDIA-SMI 555.00    Driver Version: 555.00
-CUDA Version: 12.5
+You should see your NVIDIA GPU and driver information.
+
+Then verify PyTorch CUDA later with:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-**If you don't see this:**
-1. Download NVIDIA drivers: https://www.nvidia.com/Download/driverDetails.aspx
-2. Install them and restart
-3. Try `nvidia-smi` again
+Expected output:
 
-**If `nvidia-smi` is not found:**
-- You don't have CUDA installed
-- Download CUDA Toolkit: https://developer.nvidia.com/cuda-downloads
-- Choose Windows, your GPU type, and latest version
-- Install and restart
+```text
+True
+```
 
 ---
 
-## Step 2: Create Project Structure (5 minutes)
+## 3. Create Project Structure
 
-Open Command Prompt and create your project:
+Use this structure:
+
+```text
+VITS_TTS/
+├── data/
+│   ├── LJSpeech-1.1/
+│   └── ljspeech_prepared/
+│       └── cache/
+│           ├── mels/
+│           └── ids/
+├── logs/
+├── checkpoints/
+├── scripts/
+├── prepare_data.py
+├── validate_dataset.py
+├── precompute_features.py
+├── vits_model.py
+├── vits_data.py
+├── vits_data_cached.py
+├── train_vits.py
+├── inference_vits.py
+├── tts_app.py
+└── vits_config.yaml
+```
+
+Create folders:
 
 ```bash
-# Navigate to a convenient location
-cd C:\Users\YourUsername\Documents
-
-# Create project folder
 mkdir VITS_TTS
 cd VITS_TTS
-
-# Create subdirectories
 mkdir data
 mkdir logs
 mkdir checkpoints
 mkdir scripts
 ```
 
-Your structure should look like:
-```
-VITS_TTS/
-├── data/
-├── logs/
-├── checkpoints/
-├── scripts/
-└── (project files go here)
-```
-
 ---
 
-## Step 3: Python Virtual Environment (10 minutes)
+## 4. Create Virtual Environment
 
-A virtual environment isolates your dependencies and prevents conflicts.
+Create:
 
-### Create Virtual Environment
 ```bash
-# In your VITS_TTS folder
 python -m venv venv
 ```
 
-This creates a `venv/` folder with isolated Python.
+Activate in Command Prompt:
 
-### Activate Virtual Environment
-
-**Option A: Command Prompt**
 ```bash
 venv\Scripts\activate
 ```
 
-**Option B: PowerShell**
+Activate in PowerShell:
+
 ```bash
 .\venv\Scripts\Activate.ps1
 ```
 
-**If PowerShell says "execution policy":**
+If PowerShell blocks activation, run:
+
 ```bash
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-Then try again.
+---
 
-You should see `(venv)` at the start of your command line:
+## 5. Install PyTorch and Core Dependencies
+
+For CUDA 11.8:
+
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
-(venv) C:\Users\YourUsername\VITS_TTS>
+
+Then install dependencies:
+
+```bash
+pip install "numpy<2"
+pip install librosa soundfile g2p_en scipy pyyaml tqdm tensorboard matplotlib scikit-learn
+```
+
+Why `numpy<2`:
+
+- it avoids compatibility issues with older audio tooling used in the project
+
+Verify setup:
+
+```bash
+python -c "import torch, librosa, g2p_en; print(torch.cuda.is_available())"
 ```
 
 ---
 
-## Step 4: Install PyTorch with CUDA (20-30 minutes)
+## 6. Download and Place the Dataset
 
-**Important:** PyTorch must match your CUDA version!
+Download **LJSpeech 1.1** and extract it into:
 
-### Check Your CUDA Version
-From Step 1, note your CUDA version:
-- CUDA 12.5 → Install cu121
-- CUDA 12.1-12.4 → Install cu121
-- CUDA 11.8 → Install cu118
-- CUDA 11.6-11.7 → Install cu117
-
-### Install PyTorch
-
-**For CUDA 12.x (most common):**
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-```
-
-**For CUDA 11.8:**
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-This takes 5-10 minutes. It's downloading PyTorch binaries.
-
-### Verify Installation
-```bash
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
-```
-
-Output should show:
-```
-2.1.0+cu121
-True
-```
-
-⚠️ **If `torch.cuda.is_available()` returns `False`:**
-- Your PyTorch doesn't have CUDA support
-- Uninstall: `pip uninstall torch torchvision torchaudio`
-- Check your CUDA version with `nvidia-smi`
-- Reinstall with the correct cu version
-
----
-
-## Step 5: Install Dependencies (10 minutes)
-
-### Download requirements.txt
-Download the `requirements.txt` file (provided separately) and save it to your VITS_TTS folder.
-
-### Install All Dependencies
-```bash
-# Make sure (venv) is activated
-pip install -r requirements.txt
-```
-
-This installs:
-- librosa (audio processing)
-- soundfile (read/write audio)
-- g2p_en (text→phoneme conversion)
-- numpy<2 (CRITICAL for compatibility)
-- scipy, pyyaml, tqdm (utilities)
-
-⚠️ **Important:** The `numpy<2` pin prevents NumPy 2.x which breaks librosa.
-
-### Verify Installation
-```bash
-python -c "import librosa; import g2p_en; print('All imports OK!')"
-```
-
----
-
-## Step 6: Download LJSpeech Dataset (30-60 minutes)
-
-LJSpeech is 13,100 audio clips of a single female speaker.
-
-### Download via Browser (Recommended)
-
-1. Go to: https://keithito.com/LJ-Speech-Dataset/
-2. Click the download link (3.2 GB file)
-3. Wait for download to complete
-4. Extract the `.tar.bz2` file:
-   - Windows 10/11: Right-click → Extract all
-   - Or use 7-Zip: https://www.7-zip.org/
-5. You'll get a folder named `LJSpeech-1.1`
-
-### Move Dataset to Project
-
-Move the extracted `LJSpeech-1.1` folder to:
-```
+```text
 VITS_TTS/data/LJSpeech-1.1
 ```
 
-Your structure should now be:
-```
-VITS_TTS/
-├── data/
-│   └── LJSpeech-1.1/
-│       ├── wavs/                    (13,100 .wav files)
-│       ├── metadata.csv             (transcript + phoneme text)
-│       └── README
-├── logs/
-├── checkpoints/
-└── scripts/
-```
+Expected contents:
 
-### Verify Dataset
-```bash
-cd data\LJSpeech-1.1
-dir wavs /s | find /c ".wav"
+```text
+data/LJSpeech-1.1/
+├── wavs/
+├── metadata.csv
+└── README
 ```
-
-You should see: **13100**
 
 ---
 
-## Step 7: Validate Dataset Quality (5 minutes)
+## 7. Validate the Dataset
 
-Run the validation script to check dataset integrity:
+Run:
 
-### Download validate_dataset.py
-Save the `validate_dataset.py` script to your VITS_TTS folder.
-
-### Run Validation
 ```bash
 python validate_dataset.py ./data/LJSpeech-1.1
 ```
 
-Expected output:
-```
-✓ Found 13100 utterances in metadata.csv
-✓ Valid audio files: 13100
-✓ No issues found!
+You want to confirm:
 
-Audio Duration Statistics:
-  Min: 1.00 seconds
-  Max: 11.00 seconds
-  Mean: 6.50 seconds
-  Total: 24.30 hours
+- audio files are present
+- metadata is readable
+- no obvious corruption exists
+
+Typical goal:
+
+```text
+13100 utterances found
+13100 valid audio files
 ```
 
 ---
 
-## Step 8: Prepare Data with Phonemes (20-30 minutes)
+## 8. Prepare Clean Phoneme Metadata
 
-LJSpeech has text, but VITS needs phonemes (the sounds).
+Run:
 
-### Download prepare_data.py
-Save the `prepare_data.py` script to your VITS_TTS folder.
-
-### Run Data Preparation
 ```bash
 python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
 ```
 
-This script:
-1. Reads all 13,100 transcripts
-2. Converts text → phonemes using g2p_en
-3. Splits into train (95%) and validation (5%)
-4. Saves VITS-compatible metadata
+This step is important.
 
-Output will be:
-```
+The data preparation patch changed the metadata generation so the training files now contain **clean phoneme tokens**, not raw words. The preparation step now:
+
+- uses `g2p_en`
+- removes stress markers like `AH0 -> AH`
+- uppercases tokens
+- removes empty and invalid tokens
+- keeps alphabetic phoneme tokens only
+- skips empty phoneme results
+- shuffles before train/validation split
+
+Expected output files:
+
+```text
 data/ljspeech_prepared/
-├── train.txt      (12,445 utterances)
-├── val.txt        (655 utterances)
-└── metadata.json  (detailed info)
+├── train.txt
+├── val.txt
+└── metadata.json
 ```
 
-**This takes 10-20 minutes because it's converting thousands of texts to phonemes.**
+A correct line should look like:
+
+```text
+LJ001-0001|DH AH P R AA JH EH K T G UW T AH N B ER G
+```
+
+A wrong line would look like raw text:
+
+```text
+LJ001-0001|THE PROJECT GUTENBERG
+```
+
+If you still see raw words in `train.txt`, stop and fix preprocessing before training.
 
 ---
 
-## Step 9: Verify Everything Works (5 minutes)
+## 9. Precompute Cached Features
 
-### Download test_setup.py
-Save the `test_setup.py` script to your VITS_TTS folder.
+Run:
 
-### Run Full Test
 ```bash
-python test_setup.py
+python precompute_features.py --config vits_config.yaml
 ```
 
-Expected output:
-```
-SETUP SUMMARY
-✓ PASS: PyTorch
-✓ PASS: Audio Libraries
-✓ PASS: Phoneme Conversion
-✓ PASS: NumPy Version
-✓ PASS: Data Loading
-✓ PASS: Prepared Metadata
+This computes expensive features once and stores them on disk.
 
-✓ ALL TESTS PASSED!
-You're ready for Phase 3: Training Setup
+Cached layout:
+
+```text
+data/ljspeech_prepared/cache/
+├── mels/
+│   └── LJ001-0001.npy
+└── ids/
+    └── LJ001-0001.npy
 ```
+
+Why this matters:
+
+Without caching, the loader repeatedly computes:
+
+- `librosa.load(...)`
+- mel spectrograms
+- dB conversion
+- phoneme ID conversion
+
+With caching:
+
+- mel spectrograms are saved once
+- phoneme IDs are saved once
+- training mostly loads arrays from disk
+
+This should improve epoch speed and GPU utilization.
 
 ---
 
-## Troubleshooting
+## 10. Use the Cached Data Loader
 
-### "CUDA is not available"
-```bash
-# Check your CUDA version
-nvidia-smi
+In `train_vits.py`, make sure you import the cached loader:
 
-# Reinstall PyTorch with correct version
-pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```python
+from vits_data_cached import create_dataloaders, get_warning_summary, reset_warning_summary
 ```
 
-### "No module named 'librosa'"
-```bash
-# Reinstall dependencies
-pip install -r requirements.txt
+Instead of:
+
+```python
+from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
 ```
 
-### "AttributeError: module 'numpy' has no attribute 'float_'"
-```bash
-# Fix NumPy 2.x incompatibility
-pip install 'numpy<2'
-```
+The cached loader includes improvements such as:
 
-### "LJSpeech-1.1 folder not found"
-```bash
-# Make sure you extracted the dataset to the correct location
-# Should be: VITS_TTS/data/LJSpeech-1.1
-dir data
-```
-
-### Dataset download is stuck
-- Download manually from: https://keithito.com/LJ-Speech-Dataset/
-- Use a download manager (IDM, Aria2, etc.)
-- Try again at a different time
+- filtering samples longer than `max_seq_length`
+- sorting by mel length to reduce padding
+- no shuffle so sorting is preserved
+- memory-efficient cache inspection with `mmap`
+- tracking skipped samples like missing cache and too-long samples
+- better initialization logs
 
 ---
 
-## What We've Done
+## 11. Confirm Vocabulary Consistency
 
-You now have:
+The model should **not** use a hardcoded vocabulary size.
 
-1. ✅ **Environment**: Python venv with PyTorch + CUDA
-2. ✅ **Dataset**: 13,100 audio files from LJSpeech
-3. ✅ **Prepared Data**: Text converted to phonemes, train/val splits
-4. ✅ **Verified Setup**: All dependencies working, data loading OK
+Correct approach in `vits_model.py`:
+
+```python
+from vits_data import VOCAB_SIZE
+```
+
+This keeps the model embedding size aligned with the phoneme mapping defined by the dataset loader.
+
+Do not keep old code like:
+
+```python
+VOCAB_SIZE = 149
+```
+
+The vocabulary size must come from the dataset source of truth.
 
 ---
 
-## Next Steps: Phase 3
+## 12. Recommended Config for RTX 3050 Ti
 
-Phase 3 will cover:
-1. Downloading/understanding VITS model architecture
-2. Creating VITS training configuration
-3. Setting up the training loop
-4. Training the model on your GPU
-5. Monitoring progress with TensorBoard
+Use settings close to this in `vits_config.yaml`:
 
-**You're now ready to build and train the actual TTS model!**
+```yaml
+batch_size: 4
+num_workers: 0
+use_amp: true
+grad_clip_val: 0.5
+max_seq_length: 300
+pin_memory: true
+```
+
+Notes:
+
+- `batch_size: 4` is safer for 4 GB VRAM
+- `num_workers: 0` is slower than higher values, but it can reduce Windows multiprocessing issues
+- `use_amp: true` usually helps performance on NVIDIA GPUs
+- `max_seq_length` helps prevent long outliers from blowing up memory
+- if cached loader skips too many samples, you may need to raise `max_seq_length`
+
+---
+
+## 13. Sanity Checks Before Training
+
+Before starting Phase 3, confirm all of the following:
+
+- `torch.cuda.is_available()` returns `True`
+- `train.txt` and `val.txt` contain phonemes, not words
+- cache files exist in `data/ljspeech_prepared/cache/`
+- `train_vits.py` imports `vits_data_cached`
+- `vits_model.py` imports `VOCAB_SIZE` instead of hardcoding it
+- config uses RTX 3050 Ti friendly settings
+
+---
+
+## 14. What You Have After Phase 2
+
+At this point you should have:
+
+- working Python environment
+- CUDA-enabled PyTorch
+- validated LJSpeech dataset
+- clean phoneme metadata
+- cached mel and ID features
+- vocabulary aligned between dataset and model
+- training-ready project layout
+
+Next phase: **train the VITS model, monitor it, and generate speech**.

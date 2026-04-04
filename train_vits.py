@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard.writer import SummaryWriter
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp.grad_scaler import GradScaler
 from tqdm import tqdm
 import argparse
 
@@ -70,7 +70,8 @@ class VITSTrainer:
             self.scheduler = None
         
         # AMP scaler (for mixed precision training)
-        self.scaler = GradScaler() if config.get('use_amp', False) else None
+        # Use new torch.amp.GradScaler API with device specification
+        self.scaler = GradScaler(self.device.type) if config.get('use_amp', False) else None
         
         # TensorBoard
         self.writer = SummaryWriter(log_dir=config['log_dir'])
@@ -164,9 +165,9 @@ class VITSTrainer:
             phoneme_lengths = batch['phoneme_lengths'].to(self.device)
             mel_lengths = batch['mel_lengths'].to(self.device)
             
-            # Forward pass
+            # Forward pass with optional autocast for mixed precision
             try:
-                with autocast() if self.scaler else torch.enable_grad():
+                with torch.autocast(device_type=self.device.type) if self.scaler else torch.enable_grad():
                     outputs = self.model(
                         phoneme_ids,
                         mel_spec=mel_spec,
@@ -286,36 +287,59 @@ class VITSTrainer:
             f"checkpoint_step_{self.global_step:06d}.pt"
         )
         
-        torch.save({
+        checkpoint_dict = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'global_step': self.global_step,
             'epoch': self.epoch,
             'config': self.config,
-        }, checkpoint_path)
+        }
+        
+        # Save GradScaler state if using AMP
+        if self.scaler is not None:
+            checkpoint_dict['scaler_state_dict'] = self.scaler.state_dict()
+        
+        torch.save(checkpoint_dict, checkpoint_path)
         
         print(f"Saved checkpoint: {checkpoint_path}")
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load from checkpoint"""
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        # Note: weights_only=False to load optimizer state and training state
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.global_step = checkpoint['global_step']
         self.epoch = checkpoint['epoch']
         
+        # Restore GradScaler state if using AMP
+        if self.scaler is not None and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        
         print(f"Loaded checkpoint from {checkpoint_path}")
+        print(f"Checkpoint epoch value: {self.epoch}")
+        print(f"Checkpoint global step: {self.global_step}")
     
     def train(self):
         """Train for multiple epochs"""
         num_epochs = self.config['num_epochs']
         
         print(f"\nStarting training for {num_epochs} epochs...")
+        # Print resumption info if continuing from checkpoint
+        if self.epoch > 0 or self.global_step > 0:
+            print(f"Resuming from epoch {self.epoch}, global_step {self.global_step}")
+        
         print(f"Device: {self.device}")
         print(f"Total steps per epoch: {len(self.train_loader)}")
         
-        for epoch in range(num_epochs):
+        # Print initial warning summary before training starts
+        print("Initial warning summary before training:")
+        self.print_warning_summary()
+        reset_warning_summary()
+        
+        # Main training loop - continues from current epoch (handles mid-epoch resumption)
+        for epoch in range(self.epoch, num_epochs):
             self.epoch = epoch
             
             # Train
