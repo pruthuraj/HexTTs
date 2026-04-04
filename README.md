@@ -194,7 +194,7 @@ tensorboard --logdir=./logs
 
 ---
 
-## Inference: "Let Me Hear My Robot" 🎵
+## Inference: "Let Me Hear My Robot" 
 
 ### Single Command:
 
@@ -364,6 +364,10 @@ Realistically: you'll be happy your computer can talk. That's enough. That's a v
 ---
 
 ## Q&A: "Will You Answer My Questions?"
+A: Yes… but only for the serious document in the /docs folder and the connments.
+
+The funny parts?
+That was 100% human intelligence.
 
 **Q: How long does training take?**  
 A: 3 hours to 2 days, depending on GPU. Most people do 12–24 hours and call it done.
