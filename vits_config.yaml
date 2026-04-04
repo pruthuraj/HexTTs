@@ -101,14 +101,22 @@ device: "cuda" # "cuda" or "cpu"
 
 # Weight for reconstruction loss (mel-spectrogram MSE)
 loss_weight_reconstruction: 1.0
+# Higher reconstruction weight can improve audio quality but may cause overfitting
+# loss_weight_reconstruction: 0.5 # A moderate reconstruction weight can help balance quality and generalization
+# loss_weight_reconstruction: 0.1 # Lower reconstruction weight can help prevent overfitting but may reduce audio quality
+
 
 # Weight for KL divergence loss
 # loss_weight_kl: 0.01 # Higher KL weight can lead to better latent space but may cause instability
-loss_weight_kl: 0.005 # A moderate KL weight can help balance reconstruction and latent space learning
+# loss_weight_kl: 0.005 # A moderate KL weight can help balance reconstruction and latent space learning
 # loss_weight_kl: 0.001 # Lower KL weight can help stabilize training
+# changed to 0.1 on 04.04.2026 to encourage better latent space learning, but monitor for instability
+loss_weight_kl: 0.1 
 
 # Weight for duration loss
-loss_weight_duration: 1.0
+# loss_weight_duration: 1.0 # Higher duration loss weight can improve duration prediction but may cause instability
+#change to 0.5 to prevent NaN explosion during early training on 04.04.2026
+loss_weight_duration: 0.5 # Reduce duration loss weight to prevent instability during early training
 
 # ============================================================
 # VALIDATION AND CHECKPOINTING
@@ -168,6 +176,9 @@ temperature: 1.0
 # Number of inference steps
 # Higher = slower but potentially better quality
 inference_steps: 1
+
+# Maximum allowed duration loss to prevent training instability (NaN explosion)
+max_duration_loss: 300
 
 # ============================================================
 # DESCRIPTION

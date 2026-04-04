@@ -183,6 +183,12 @@ class VITSTrainer:
                     # Compute loss with optional NaN protection
                     # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
                     loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
+                    
+                    # NaN protection: skip batch if duration loss is excessively high (indicates instability)
+                    if loss_dict["duration_loss"] > self.config.get("max_duration_loss", 300):
+                        print("Skipping unstable batch due to duration explosion")
+                        continue
+                    
                     loss = loss_dict['total_loss']
                     # Check for NaN or Inf loss
                     if torch.isnan(loss) or torch.isinf(loss):
@@ -232,6 +238,11 @@ class VITSTrainer:
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
                     self.writer.add_scalar('lr', self.optimizer.param_groups[0]['lr'], self.global_step)
+                    self.writer.add_histogram(
+                        "duration_predictions",
+                        outputs['duration'].detach().cpu(),
+                        self.global_step
+                    )
 
                     # Print warning summary every 500 steps
                     if self.global_step % 500 == 0:
@@ -286,6 +297,40 @@ class VITSTrainer:
         avg_loss = total_loss / max(1, valid_batches)
         self.writer.add_scalar("val/loss", avg_loss, self.global_step)
         return avg_loss
+    
+    # Log audio samples to TensorBoard for qualitative evaluation
+    @torch.no_grad()
+    def log_audio_samples(self, epoch: int):
+        """Log generated audio to TensorBoard"""
+        self.model.eval()
+
+        for i, text in enumerate(SAMPLE_TEXTS):
+            try:
+                seq = [ord(c) % self.config['vocab_size'] for c in text]
+
+                x = torch.LongTensor(seq).unsqueeze(0).to(self.device)
+                x_lengths = torch.LongTensor([x.size(1)]).to(self.device)
+
+                audio = self.model.inference(x, lengths=x_lengths)
+
+                if audio.dim() == 3:
+                    audio = audio.squeeze(0)
+
+                # Detach and move to CPU for TensorBoard logging
+                audio = audio.detach().cpu()
+
+                # Log to TensorBoard
+                self.writer.add_audio(
+                    tag=f"sample_audio_{i}",
+                    snd_tensor=audio,
+                    global_step=epoch,
+                    sample_rate=self.config.get("sample_rate", 22050),
+                )
+
+            except Exception as e:
+                print(f"TensorBoard audio logging failed: {e}")
+
+        self.model.train()
     
     def save_checkpoint(self):
         """Save model checkpoint"""
@@ -369,6 +414,8 @@ class VITSTrainer:
                         device=self.device.type,
                         sample_rate=self.config.get("sample_rate", 22050),
                     )
+                    # Log generated samples to TensorBoard
+                    self.log_audio_samples(epoch + 1)
                     print(f"Saved audio samples for epoch {epoch + 1}")
                 except Exception as e:
                     print(f"Sample generation failed: {e}")
