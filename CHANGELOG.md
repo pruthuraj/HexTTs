@@ -5,6 +5,37 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.4.1] - 2026-04-06
+
+### Fixed
+
+- **Sample Generation API Mismatch** — `generate_samples()` was calling `model.infer()` but VITS exposes `model.inference()`
+  - Fixed by aligning the API call in `utils/sample_generation.py`
+  - Prevents `AttributeError` during sample generation at epoch 5, 10, 15, etc.
+  - Sample audio now generates correctly for qualitative evaluation
+
+- **Mel-Spectrogram Logging in TensorBoard** — `log_audio_samples()` was incorrectly treating 80-channel mel-spectrogram as audio
+  - Changed from `add_audio()` to `add_image()` for proper visualization
+  - Mel-spectrograms now logged as heatmaps instead of "audio" (which would error or produce garbage)
+  - Updated method docstring to clarify it logs mel-spectrograms, not waveforms
+
+- **TensorBoard LR Tag Inconsistency** — Learning rate was logged as `lr` instead of `train/lr`
+  - Changed tag from `'lr'` to `'train/lr'` for consistent metric grouping
+  - Now matches changelog documentation and other training metrics under `train/*` namespace
+  - TensorBoard grouping now displays cleanly
+
+- **Config Section Organization** — `max_duration_loss` was listed under **INFERENCE SETTINGS** instead of training configuration
+  - Moved to new **TRAINING STABILITY** section (logically grouped with stability knobs)
+  - Clarifies that this is a training-time safety mechanism, not an inference parameter
+  - Reduces confusion about when and how the setting applies
+
+### Internal
+
+- **Training Pipeline Robustness** — Better separation of sample generation and TensorBoard logging concerns
+- **Config Clarity** — Clearer organization of training vs. inference settings
+
+---
+
 ## [v0.4.0] - 2026-04-04
 
 ### Added

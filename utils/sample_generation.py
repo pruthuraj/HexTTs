@@ -22,8 +22,8 @@ def generate_samples(
         x = torch.LongTensor(seq).unsqueeze(0).to(device)
         x_lengths = torch.LongTensor([x.size(1)]).to(device)
 
-        # Adjust this call if your model.infer signature is different
-        audio = model.infer(x, x_lengths)[0]
+        # Adjust this call if your model.inference signature is different
+        audio = model.inference(x, x_lengths)[0]
 
         if isinstance(audio, tuple):
             audio = audio[0]

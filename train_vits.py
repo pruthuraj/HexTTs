@@ -237,7 +237,7 @@ class VITSTrainer:
                     self.writer.add_scalar('train/recon_loss', loss_dict['recon_loss'], self.global_step)
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
-                    self.writer.add_scalar('lr', self.optimizer.param_groups[0]['lr'], self.global_step)
+                    self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], self.global_step)
                     self.writer.add_histogram(
                         "duration_predictions",
                         outputs['duration'].detach().cpu(),
@@ -298,10 +298,10 @@ class VITSTrainer:
         self.writer.add_scalar("val/loss", avg_loss, self.global_step)
         return avg_loss
     
-    # Log audio samples to TensorBoard for qualitative evaluation
+    # Log mel-spectrogram samples to TensorBoard for qualitative evaluation
     @torch.no_grad()
     def log_audio_samples(self, epoch: int):
-        """Log generated audio to TensorBoard"""
+        """Log predicted mel-spectrograms to TensorBoard as images"""
         self.model.eval()
 
         for i, text in enumerate(SAMPLE_TEXTS):
@@ -311,20 +311,19 @@ class VITSTrainer:
                 x = torch.LongTensor(seq).unsqueeze(0).to(self.device)
                 x_lengths = torch.LongTensor([x.size(1)]).to(self.device)
 
-                audio = self.model.inference(x, lengths=x_lengths)
+                mel = self.model.inference(x, lengths=x_lengths)
 
-                if audio.dim() == 3:
-                    audio = audio.squeeze(0)
+                if mel.dim() == 3:
+                    mel = mel.squeeze(0)
 
                 # Detach and move to CPU for TensorBoard logging
-                audio = audio.detach().cpu()
+                mel = mel.detach().cpu()
 
-                # Log to TensorBoard
-                self.writer.add_audio(
-                    tag=f"sample_audio_{i}",
-                    snd_tensor=audio,
+                # Log mel-spectrogram as image (mel: n_mel_channels x T)
+                self.writer.add_image(
+                    tag=f"sample_mel_{i}",
+                    img_tensor=mel,
                     global_step=epoch,
-                    sample_rate=self.config.get("sample_rate", 22050),
                 )
 
             except Exception as e:

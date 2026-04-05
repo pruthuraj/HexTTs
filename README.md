@@ -1,6 +1,6 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.3.2_
+_v0.4.1_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 

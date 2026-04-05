@@ -177,6 +177,10 @@ temperature: 1.0
 # Higher = slower but potentially better quality
 inference_steps: 1
 
+# ============================================================
+# TRAINING STABILITY
+# ============================================================
+
 # Maximum allowed duration loss to prevent training instability (NaN explosion)
 max_duration_loss: 300
 
