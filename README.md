@@ -1,6 +1,6 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.4.2_
+_v0.4.3_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 
@@ -697,7 +697,7 @@ Explain what a mel spectrogram is at a dinner party
 
 ---
 
-_Last updated: April 6, 2026_ (v0.4.2 — Batch evaluation & better code documentation)  
+_Last updated: April 7, 2026_ (v0.4.3 — PostNet refinement & enhanced diagnostics)  
 _GPU cooling status: CRITICAL_  
 _Electricity bill status: DO NOT OPEN_  
 _vits_data_cached.py status: Use it. Seriously._

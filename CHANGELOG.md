@@ -5,6 +5,114 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.4.3] - 2026-04-07
+
+### Added
+
+- **PostNet for Mel-Spectrogram Refinement** — Neural network that learns to refine decoder output
+  - New `PostNet` class that predicts mel-scale residuals
+  - Added to both training and inference pipelines
+  - Reduces artifacts in generated spectrograms by adding: `refined_mel = decoder_mel + postnet(decoder_mel)`
+  - Helps reduce buzzy/metallic artifacts in audio output
+
+- **Enhanced Audio Evaluation Metrics** — `evaluate_tts_output.py` now includes spectral analysis
+  - New `spectral_flatness` metric using librosa's `spectral_flatness()` function
+  - Evaluates whether audio spectrum resembles white noise (flat) vs speech (structured)
+  - Verdicts added: noise-like (>0.6), somewhat noisy (>0.4), speech-like (<0.4)
+  - Batch summary now includes spectral flatness alongside existing metrics
+  - More comprehensive audio quality understanding
+
+- **Comprehensive Duration Diagnostics** — Detailed TensorBoard logging for duration prediction
+  - New metrics: `train/pred_duration_sum_mean`, `train/target_duration_sum_mean`, `train/relative_duration_error_mean`
+  - Duration extremes tracked: `train/duration_max`, `train/duration_min`
+  - Mel-spectrogram range monitoring: `train/predicted_mel_max`, `train/predicted_mel_min`
+  - Identical validation metrics for cross-phase comparison (`val/duration_max`, `val/duration_min`, etc.)
+  - Helps identify when duration predictor diverges or produces extreme values
+
+### Improved
+
+- **Duration Loss Supervision** — Switched to relative error with robust outlier handling
+  - Old method: Simple L1 loss between predicted and target duration sums
+  - New method: Relative absolute error `|pred - target| / target` clamped at 5.0
+  - Clamping prevents single exploding batches from dominating loss
+  - Better stability during training, especially with smaller batch sizes
+
+- **Duration Predictor Stability** — Hard clamping prevents extreme values
+  - Duration output range: now clamped to `[1.0, 20.0]` frames per phoneme
+  - Previously only had soft constraint via softplus
+  - Prevents duration explosion that caused NaN failures in length regulation
+  - Additional validation check: skip batches if `duration.max() >= 20.0`
+
+- **Mixed Precision Handling** — Fixed context manager for autocast
+  - Old: Awkward context with `if self.scaler else torch.enable_grad()`
+  - New: Explicit `torch.autocast(device_type='cuda', enabled=False)` when not using AMP
+  - Cleaner, more explicit control over mixed precision regions
+  - Prevents edge cases with gradient computation
+
+- **Gradient NaN Protection** — Validation loop now checks gradient health
+  - Skips batches if gradients contain NaN/Inf values
+  - Prevents gradient stack corruption mid-training
+  - Additional safeguard beyond loss checking
+
+- **Inference Function Documentation** — Comprehensive comments on latent code generation
+  - Detailed step-by-step explanation of inference pipeline
+  - Clarifies role of duration scaling, noise scale, text prior, and stochasticity
+  - Better for future maintenance and understanding
+
+### Configuration Updates
+
+- **Learning Rate Reduction** — More conservative training
+  - `learning_rate: 0.0002 → 0.0001`
+  - Reduces risk of unstable updates to duration and decoder
+  - Slower convergence but more stable training trajectory
+
+- **Duration Loss Weight Options** — Multiple recommended values provided
+  - Current: `loss_weight_duration: 0.1` (balanced)
+  - Alternatives documented: `0.05` (very conservative) and higher for stability
+  - Prevents duration component from overwhelming other losses
+
+- **AMP Disabled by Default** — Mixed precision now off for stability
+  - `use_amp: false` (changed from `true`)
+  - Reason: NaN instability observed with smaller batch sizes and float16
+  - Can re-enable if using larger batches or with more stable checkpoint
+
+- **Reduced Max Sequence Length** — Smaller sequences for stability
+  - `max_seq_length: 500 → 300` frames (≈3 seconds)
+  - Reduces GPU memory pressure
+  - Decreases likelihood of extreme duration predictions
+
+### Fixed
+
+- **Length Regulation Edge Cases** — Clamped repeat counts to prevent runaway expansion
+  - Changed: `repeat_count = max(1, int(duration[i, j].item()))`
+  - To: `repeat_count = min(20, max(1, int(duration[i, j].item())))`
+  - Prevents single phoneme from expanding to 1000+ frames due to prediction error
+
+- **NaN Batch Skipping Logic** — Removed overly aggressive duration loss threshold
+  - Old check: `if loss_dict["duration_loss"] > 300: skip_batch`
+  - Issue: Relative error supervision makes absolute thresholds unreliable
+  - New approach: Rely on clamping + extremes check (`duration.max() >= 20.0`)
+  - More robust across different training regimes
+
+### Internal
+
+- **Training Stability** — Better protection against outlier batches and gradient explosion
+- **Diagnostics** — Much richer TensorBoard telemetry for debugging duration issues
+- **Code Quality** — Clearer separation of concerns in duration vs mel prediction monitoring
+
+### Known Issues
+
+- **Audio Quality Still Buzzy** — High zero-crossing rate (~0.49) indicates metallic artifacts
+  - Root causes: Simplified VITS architecture, basic Griffin-Lim vocoder
+  - Not a bug; architectural limitation at current training stage
+  - Improves with longer training and better vocoder (HiFi-GAN upgrade path exists)
+
+- **Duration Prediction Learning Slow** — Model struggles with phoneme timing alignment
+  - Current approach matches total length, not frame-by-frame alignment
+  - Future improvement: Implement Monotonic Alignment Search (MAS)
+
+---
+
 ## [v0.4.2] - 2026-04-06
 
 ### Added

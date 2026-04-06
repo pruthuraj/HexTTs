@@ -1,6 +1,7 @@
 # Ignore files of log , checkpoints, and data
 
 logs/*
+oldLog/*
 !logs/.gitkeep
 checkpoints/*
 !checkpoints/.gitkeep

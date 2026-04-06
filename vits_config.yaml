@@ -69,7 +69,7 @@ posterior_flow_num_layers: 4
 
 # Learning rates
 # learning_rate: 0.002
-learning_rate: 0.0002 # Lower learning rate for more stable training
+learning_rate: 0.0001 # Lower learning rate for more stable training
 adam_beta1: 0.9
 adam_beta2: 0.999
 adam_eps: 1.0e-9
@@ -116,8 +116,10 @@ loss_weight_kl: 0.1
 # Weight for duration loss
 # loss_weight_duration: 1.0 # Higher duration loss weight can improve duration prediction but may cause instability
 #change to 0.5 to prevent NaN explosion during early training on 04.04.2026
-loss_weight_duration: 0.5 # Reduce duration loss weight to prevent instability during early training
-
+#loss_weight_duration: 0.5 # Reduce duration loss weight to prevent instability during early training
+loss_weight_duration: 0.1  # A moderate duration loss weight can help improve duration prediction while maintaining training stability
+# loss_weight_duration: 0.05 # Further reduce duration loss weight to prevent NaN explosion during early training, especially with smaller batch sizes
+                 
 # ============================================================
 # VALIDATION AND CHECKPOINTING
 # ============================================================
@@ -152,8 +154,9 @@ num_samples_to_generate: 3
 # ============================================================
 
 # Mixed precision training (speeds up training on newer GPUs)
-use_amp: true # Enable AMP for faster training (requires compatible GPU and PyTorch version)
-# use_amp: false # Set to false if you encounter stability issues
+# use_amp: true # Enable AMP for faster training (requires compatible GPU and PyTorch version)
+# turn off AMP if you encounter stability issues (NaN losses) during training, especially with smaller batch sizes
+use_amp: false # Set to false if you encounter stability issues with mixed precision
 
 # Number of steps to warmup learning rate (0 = no warmup)
 warmup_steps: 0
@@ -161,7 +164,9 @@ warmup_steps: 0
 # Sequence length for training (in frames)
 # Longer sequences need more GPU memory
 # 22050 Hz * 10 seconds / 256 hop_length ≈ 861 frames
-max_seq_length: 500 # Approximately 5 seconds at 22050 Hz
+max_seq_length: 300 # Approximately 3 seconds at 22050 Hz, adjust based on GPU memory and dataset
+# max_seq_length: 500 # Approximately 5 seconds at 22050 Hz
+# max_seq_length: 800 # Approximately 9 seconds at 22050 Hz, adjust based on GPU memory and dataset
 
 # Random seed for reproducibility
 seed: 42

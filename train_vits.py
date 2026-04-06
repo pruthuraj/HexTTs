@@ -134,13 +134,34 @@ class VITSTrainer:
         # In a real implementation, you'd extract durations from alignments
         # duration_loss = torch.tensor(0.0, device=predicted_mel.device) # Old
         
-        # NEW: duration supervision by matching total predicted length to mel length
-        pred_duration_sum = duration.sum(dim=1)
-        target_duration_sum = mel_lengths.float()
-        duration_loss = nn.functional.l1_loss(
-            pred_duration_sum, target_duration_sum, reduction="mean"
-        )
+        # v0.4.2 : duration supervision by matching total predicted length to mel length
+        # pred_duration_sum = duration.sum(dim=1)
+        # target_duration_sum = mel_lengths.float()
+        # duration_loss = nn.functional.l1_loss(
+        #     pred_duration_sum, target_duration_sum, reduction="mean"
+        # )
         
+        
+        # new v0.4.3: relative error supervision with clamping to handle outliers and improve stability
+        # Sum predicted token durations to get total predicted mel length per sample.
+        # Handle both possible shapes:
+        # - (B, T, 1) -> sum over T then squeeze trailing dim
+        # - (B, T)    -> sum over T directly
+        pred_duration_sum = duration.sum(dim=1)
+
+        # Ground-truth total mel lengths from the batch (cast to float for loss math)
+        target_duration_sum = mel_lengths.float()
+
+        # Relative absolute error:
+        # |pred - target| / target
+        # Small epsilon avoids division-by-zero for any malformed zero-length targets.
+        rel_error = torch.abs(pred_duration_sum - target_duration_sum) / (target_duration_sum + 1e-6)
+
+        # Clamp large outliers so unstable batches do not dominate training.
+        rel_error = torch.clamp(rel_error, max=5.0)
+
+        # Final duration loss is batch mean relative error.
+        duration_loss = rel_error.mean()
         
         
         # Weighted sum
@@ -155,6 +176,9 @@ class VITSTrainer:
             'recon_loss': recon_loss.item(),
             'kl_loss': kl_loss.item(),
             'duration_loss': duration_loss.item(),
+            'pred_duration_sum_mean': pred_duration_sum.mean().item(),
+            'target_duration_sum_mean': target_duration_sum.mean().item(),
+            'rel_error_mean': rel_error.mean().item(),
         }
     
     def train_epoch(self) -> float:
@@ -174,7 +198,12 @@ class VITSTrainer:
             
             # Forward pass with optional autocast for mixed precision
             try:
-                with torch.autocast(device_type=self.device.type) if self.scaler else torch.enable_grad():
+                if self.scaler:
+                    autocast_context = torch.autocast(device_type=self.device.type)
+                else:
+                    autocast_context = torch.autocast(device_type=self.device.type, enabled=False)
+
+                with autocast_context:
                     outputs = self.model(
                         phoneme_ids,
                         mel_spec=mel_spec,
@@ -185,8 +214,18 @@ class VITSTrainer:
                     loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
                     
                     # NaN protection: skip batch if duration loss is excessively high (indicates instability)
-                    if loss_dict["duration_loss"] > self.config.get("max_duration_loss", 300):
-                        print("Skipping unstable batch due to duration explosion")
+                    # duration explosion skip” no longer works as intended 
+                    # due to change to relative error supervision, so we rely on the clamping in the loss function and
+                    # the additional check below for extreme duration values.
+                    # if loss_dict["duration_loss"] > self.config.get("max_duration_loss", 300):
+                    #     print("Skipping unstable batch due to duration explosion")
+                    #     continue
+                    
+                    # in v0.4.3: Additional NaN protection: skip batch if any predicted duration exceeds
+                    # the configured maximum duration value (values exactly at the clamp boundary are valid).
+                    max_duration_value = self.config.get("max_duration_value", 20.0)
+                    if outputs['duration'].max().item() > max_duration_value:
+                        print("Skipping unstable batch due to extreme duration values")
                         continue
                     
                     loss = loss_dict['total_loss']
@@ -238,6 +277,20 @@ class VITSTrainer:
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
                     self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], self.global_step)
+
+                    # New v0.4.3: Duration diagnostics
+                    self.writer.add_scalar('train/pred_duration_sum_mean', loss_dict['pred_duration_sum_mean'], self.global_step)
+                    self.writer.add_scalar('train/target_duration_sum_mean', loss_dict['target_duration_sum_mean'], self.global_step)
+                    self.writer.add_scalar('train/relative_duration_error_mean', loss_dict['rel_error_mean'], self.global_step)
+                    self.writer.add_scalar('train/duration_max', outputs['duration'].max().item(), self.global_step)
+                    self.writer.add_scalar('train/duration_min', outputs['duration'].min().item(), self.global_step)
+
+                    # New v0.4.3: Mel/output diagnostics
+                    self.writer.add_scalar('train/predicted_mel_length', outputs['predicted_mel'].shape[2], self.global_step)
+                    self.writer.add_scalar('train/target_mel_length_mean', mel_lengths.float().mean().item(), self.global_step)
+                    self.writer.add_scalar('train/predicted_mel_max', outputs['predicted_mel'].max().item(), self.global_step)
+                    self.writer.add_scalar('train/predicted_mel_min', outputs['predicted_mel'].min().item(), self.global_step)
+
                     self.writer.add_histogram(
                         "duration_predictions",
                         outputs['duration'].detach().cpu(),
@@ -287,6 +340,64 @@ class VITSTrainer:
 
             loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
             loss = loss_dict["total_loss"]
+            
+            # New v0.4.3: NaN protection for validation - skip batch if loss is NaN or Inf 
+            if torch.isnan(loss) or torch.isinf(loss):
+                print("Invalid loss detected — skipping batch")
+                continue
+            
+            # New v0.4.3: Additional NaN protection for validation - skip batch if any output tensor contains NaN or Inf values
+            bad_tensor = False
+
+            for name, value in outputs.items():
+                if torch.is_tensor(value):
+                    if torch.isnan(value).any() or torch.isinf(value).any():
+                        print(f"Invalid output tensor detected in {name} — skipping batch")
+                        bad_tensor = True
+                        break
+
+            if bad_tensor:
+                continue
+            
+            # New v0.4.3: Additional validation diagnostics for duration predictions and mel outputs
+            # Validation diagnostics
+            pred_duration_sum = outputs['duration'].squeeze(-1).sum(dim=1)
+
+            self.writer.add_scalar(
+                "val/pred_duration_sum_mean",
+                pred_duration_sum.mean().item(),
+                self.global_step
+            )
+
+            self.writer.add_scalar(
+                "val/target_duration_sum_mean",
+                mel_lengths.float().mean().item(),
+                self.global_step
+            )
+
+            self.writer.add_scalar(
+                "val/duration_max",
+                outputs['duration'].max().item(),
+                self.global_step
+            )
+
+            self.writer.add_scalar(
+                "val/duration_min",
+                outputs['duration'].min().item(),
+                self.global_step
+            )
+
+            self.writer.add_scalar(
+                "val/predicted_mel_max",
+                outputs['predicted_mel'].max().item(),
+                self.global_step
+            )
+
+            self.writer.add_scalar(
+                "val/predicted_mel_min",
+                outputs['predicted_mel'].min().item(),
+                self.global_step
+            )
 
             if torch.isnan(loss) or torch.isinf(loss):
                 continue

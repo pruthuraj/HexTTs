@@ -55,6 +55,18 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
         if len(audio)
         else 0.0
     )
+    
+    spectral_flatness = (
+        safe_float(
+            librosa.feature.spectral_flatness(
+                y=audio.astype(np.float32),
+                n_fft=1024,
+                hop_length=256,
+            ).mean()
+        )
+        if len(audio)
+        else 0.0
+    )
 
     # Mel-spectrogram based summary stats.
     mel = librosa.feature.melspectrogram(
@@ -102,6 +114,13 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
     else:
         verdicts.append("Waveform is not excessively noisy by ZCR.")
 
+    if spectral_flatness > 0.6:
+        verdicts.append("Spectrum looks strongly noise-like.")
+    elif spectral_flatness > 0.4:
+        verdicts.append("Spectrum is somewhat noisy.")
+    else:
+        verdicts.append("Spectrum has more speech-like structure.")
+
     # Structured report output.
     return {
         "file": str(audio_path),
@@ -112,6 +131,7 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
         "rms_energy": round(float(rms), 6),
         "silence_ratio": round(float(silence_ratio), 6),
         "zero_crossing_rate": round(float(zcr), 6),
+        "spectral_flatness": round(float(spectral_flatness), 6),
         "mel_frames": int(mel_frames),
         "mel_mean_db": round(float(mel_mean_db), 4),
         "mel_std_db": round(float(mel_std_db), 4),
@@ -132,6 +152,7 @@ def print_report(report: dict):
     print(f"RMS energy         : {report['rms_energy']:>6.6f}")
     print(f"Silence ratio      : {report['silence_ratio']:>6.6f}")
     print(f"Zero crossing rate : {report['zero_crossing_rate']:>6.6f}")
+    print(f"Spectral flatness  : {report['spectral_flatness']:>6.6f}")
     print(f"Mel frames         : {report['mel_frames']:>6d}")
     print(f"Mel mean dB        : {report['mel_mean_db']:>6.4f} dB")
     print(f"Mel std dB         : {report['mel_std_db']:>6.4f} dB")
@@ -201,7 +222,8 @@ def main():
             duration = report['duration_sec']
             rms = report['rms_energy']
             zcr = report['zero_crossing_rate']
-            print(f"{i}. {filename:40s} | {duration:6.3f}s | RMS: {rms:.4f} | ZCR: {zcr:.4f}")
+            flatness = report['spectral_flatness']
+            print(f"{i}. {filename:40s} | {duration:6.3f}s | RMS: {rms:.4f} | ZCR: {zcr:.4f} | Flat: {flatness:.4f}")
 
 
 if __name__ == "__main__":

@@ -191,8 +191,9 @@ class DurationPredictor(nn.Module):
         # Predict duration
         x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
         duration = self.linear(x)  # (batch_size, seq_len, 1)
-        duration = torch.clamp(F.softplus(duration), min=1.0)  # Ensure positive
-        
+        # duration = torch.clamp(F.softplus(duration), min=1.0)  # Ensure positive
+        # clamp duration to prevent extreme values that can cause memory issues during length regulation
+        duration = torch.clamp(F.softplus(duration), min=1.0, max=20.0) 
         return duration
 
 
@@ -268,6 +269,85 @@ class Decoder(nn.Module):
         
         return mel
 
+# New v0.4.3: PostNet for mel-spectrogram refinement
+class PostNet(nn.Module):
+    """
+    Refines predicted mel-spectrogram to reduce rough / buzzy artifacts.
+    
+    PostNet is a convolutional residual network that learns to refine the decoder's 
+    mel-spectrogram output by predicting mel-scale residuals. During training/inference,
+    the PostNet output is added to the decoder output: refined_mel = decoder_mel + postnet(decoder_mel)
+    
+    Architecture:
+        - Input: Raw mel-spectrogram from decoder
+        - Hidden layers: Conv1d with BatchNorm and Tanh activation for non-linearity
+        - Output: Residual mel-spectrogram of same shape as input
+    """
+
+    def __init__(self, mel_channels: int, hidden_channels: int = 256, kernel_size: int = 5, num_layers: int = 5):
+        super().__init__()
+
+        layers = []
+
+        # First layer: Project mel-spectrogram from mel_channels to hidden_channels
+        # Conv1d with kernel_size=5 captures local temporal dependencies in mel-spectrogram
+        # Batch normalization stabilizes training and accelerates convergence
+        # Tanh activation provides bounded non-linearity suitable for spectrogram refinement
+        layers.append(
+            nn.Sequential(
+                nn.Conv1d(mel_channels, hidden_channels, kernel_size, padding=kernel_size // 2),
+                nn.BatchNorm1d(hidden_channels),
+                nn.Tanh(),
+                nn.Dropout(0.1),  # Prevent co-adaptation of features
+            )
+        )
+
+        # Middle layers: Maintain hidden_channels dimension while refining features
+        # Multiple layers allow the network to learn hierarchical mel-scale artifacts
+        # Each layer refines the representation through local convolutions and normalization
+        for _ in range(num_layers - 2):
+            layers.append(
+                nn.Sequential(
+                    nn.Conv1d(hidden_channels, hidden_channels, kernel_size, padding=kernel_size // 2),
+                    nn.BatchNorm1d(hidden_channels),
+                    nn.Tanh(),
+                    nn.Dropout(0.1),  # Regularization
+                )
+            )
+
+        # Final layer: Project from hidden_channels back to mel_channels
+        # Outputs residuals that will be added to the decoder's mel-spectrogram
+        # No activation here (linear output) to allow both positive and negative corrections
+        layers.append(
+            nn.Sequential(
+                nn.Conv1d(hidden_channels, mel_channels, kernel_size, padding=kernel_size // 2),
+                nn.BatchNorm1d(mel_channels),
+                nn.Dropout(0.1),
+            )
+        )
+
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute mel-spectrogram refinement residuals.
+        
+        Args:
+            x: Mel-spectrogram from decoder (batch_size, mel_channels, time_steps)
+        
+        Returns:
+            Residual mel-spectrogram of same shape: (batch_size, mel_channels, time_steps)
+            
+        Note:
+            The output should be added to the original mel-spectrogram:
+            refined_mel = original_mel + postnet(original_mel)
+        """
+        # Pass through each convolutional layer sequentially
+        # Each layer refines the spectrogram representation
+        for layer in self.layers:
+            x = layer(x)
+        
+        return x
 
 class VITS(nn.Module):
     """
@@ -333,6 +413,9 @@ class VITS(nn.Module):
             num_layers=config['decoder_num_layers']
         )
         
+        # New v0.4.3: PostNet for mel-spectrogram refinement
+        self.postnet = PostNet(mel_channels=config['n_mel_channels'])
+        
         # NEW: project expanded text features into latent space
         self.prior_proj = nn.Linear(config["encoder_hidden_size"], config["latent_dim"])
     
@@ -383,7 +466,9 @@ class VITS(nn.Module):
         
         # Decoder: Latent → Mel-spectrogram
         predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
-        
+        # New v0.4.3: Apply PostNet for mel-spectrogram refinement
+        predicted_mel = predicted_mel + self.postnet(predicted_mel)
+
         return {
             'predicted_mel': predicted_mel,
             'duration': duration,
@@ -402,27 +487,45 @@ class VITS(nn.Module):
     ) -> torch.Tensor:
         """
         Inference mode: phonemes → predicted mel-spectrogram
+        
+        Args:
+            phonemes: Phoneme indices tensor (batch_size, seq_len)
+            lengths: Optional sequence lengths for masking (batch_size,)
+            duration_scale: Multiplicative scale for predicted durations (controls speech speed)
+            noise_scale: Standard deviation of Gaussian noise added to latent code
+        
+        Returns:
+            predicted_mel: Mel-spectrogram tensor (batch_size, mel_channels, time_steps)
         """
-        # Text Encoder: Phonemes → Embeddings
-        encoder_out = self.encoder(phonemes, lengths=lengths)  # (batch_size, seq_len, hidden)
+        # Step 1: Text Encoder - Convert phoneme indices to contextual embeddings
+        encoder_out = self.encoder(phonemes, lengths=lengths)
 
-        # Duration Predictor
-        raw_duration = self.duration_predictor(encoder_out)
-        duration = F.relu(raw_duration) * duration_scale  # (batch_size, seq_len, 1)
+        # Step 2: Duration Predictor - Predict frame-level duration for each phoneme
+        # Clamp raw predicted durations to a valid range before applying duration_scale
+        # so speech-rate control is not aggressively truncated by the ceiling.
+        duration = self.duration_predictor(encoder_out)
+        duration = torch.clamp(duration, min=1.0, max=20.0)
+        # Scale duration by duration_scale parameter (>1.0 = slower, <1.0 = faster)
+        duration = duration * duration_scale
 
-        # Length Regulator (Expand by duration)
-        expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
+        # Step 3: Length Regulator - Expand encoder output by repeating frames according to duration
+        # This aligns the text representation with the expected mel-spectrogram length
+        expanded = self._length_regulate(encoder_out, duration)
 
-        # NEW: text-conditioned latent prior
-        prior_latent = self.prior_proj(expanded)  # (batch_size, total_len, latent_dim)
+        # Step 4: Project expanded text features into latent space as a prior
+        # This text-conditioned prior guides the decoder towards phonetically meaningful representations
+        prior_latent = self.prior_proj(expanded)
 
-        # Sample from prior N(0, 1)
-        noise = torch.randn_like(prior_latent) * noise_scale  # Adjust noise scale for inference
+        # Step 5: Add stochastic noise to the latent code
+        # This provides variability in the generated speech while maintaining phonetic content
+        noise = torch.randn_like(prior_latent) * noise_scale
         z = prior_latent + noise
-        mu, logvar = None, None
 
-        # Decoder: Latent → Mel-spectrogram
-        predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
+        # Step 6: Decode latent code to mel-spectrogram
+        # z contains both text information (prior) and stochastic variation (noise)
+        predicted_mel = self.decoder(z)
+        # New v0.4.3: Apply PostNet for mel-spectrogram refinement
+        predicted_mel = predicted_mel + self.postnet(predicted_mel)
 
         return predicted_mel
 
@@ -463,7 +566,7 @@ class VITS(nn.Module):
             output = []
             for j in range(seq_len):
                 # Repeat each frame according to predicted duration
-                repeat_count = max(1, int(duration[i, j].item()))
+                repeat_count = min(20, max(1, int(duration[i, j].item())))
                 output.append(x[i, j].unsqueeze(0).repeat(repeat_count, 1))
             outputs.append(torch.cat(output, dim=0))
         
