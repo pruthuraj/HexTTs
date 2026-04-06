@@ -393,7 +393,13 @@ class VITS(nn.Module):
         }
     
     # Inference method for generating mel-spectrogram from phonemes
-    def inference(self, phonemes: torch.Tensor, lengths: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def inference(
+        self,
+        phonemes: torch.Tensor,
+        lengths: Optional[torch.Tensor] = None,
+        duration_scale: float = 1.0,
+        noise_scale: float = 0.3,
+    ) -> torch.Tensor:
         """
         Inference mode: phonemes → predicted mel-spectrogram
         """
@@ -401,7 +407,8 @@ class VITS(nn.Module):
         encoder_out = self.encoder(phonemes, lengths=lengths)  # (batch_size, seq_len, hidden)
 
         # Duration Predictor
-        duration = self.duration_predictor(encoder_out)  # (batch_size, seq_len, 1)
+        raw_duration = self.duration_predictor(encoder_out)
+        duration = F.relu(raw_duration) * duration_scale  # (batch_size, seq_len, 1)
 
         # Length Regulator (Expand by duration)
         expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
@@ -410,7 +417,7 @@ class VITS(nn.Module):
         prior_latent = self.prior_proj(expanded)  # (batch_size, total_len, latent_dim)
 
         # Sample from prior N(0, 1)
-        noise = torch.randn_like(prior_latent) * 0.3
+        noise = torch.randn_like(prior_latent) * noise_scale  # Adjust noise scale for inference
         z = prior_latent + noise
         mu, logvar = None, None
 

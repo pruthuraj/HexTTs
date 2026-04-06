@@ -298,37 +298,67 @@ class VITSTrainer:
         self.writer.add_scalar("val/loss", avg_loss, self.global_step)
         return avg_loss
     
-    # Log mel-spectrogram samples to TensorBoard for qualitative evaluation
     @torch.no_grad()
     def log_audio_samples(self, epoch: int):
-        """Log predicted mel-spectrograms to TensorBoard as images"""
+        """
+        Log predicted mel-spectrograms to TensorBoard as images.
+        
+        This method generates mel-spectrograms from sample texts and visualizes them
+        as heatmaps in TensorBoard for qualitative evaluation during training.
+        No gradients are computed (inference-only).
+        """
+        # Switch to evaluation mode (disables dropout, batch norm, etc.)
         self.model.eval()
 
+        # Process each sample text
         for i, text in enumerate(SAMPLE_TEXTS):
             try:
+                # Convert text characters to phoneme IDs using character code modulo vocab size
+                # (Quick & dirty but works for ASCII input)
                 seq = [ord(c) % self.config['vocab_size'] for c in text]
 
+                # Create batch tensor: shape (1, seq_len)
                 x = torch.LongTensor(seq).unsqueeze(0).to(self.device)
+                # Phoneme sequence length for masking during inference
                 x_lengths = torch.LongTensor([x.size(1)]).to(self.device)
 
+                # Forward pass: inference returns mel-spectrogram (B, n_mel_channels, T)
                 mel = self.model.inference(x, lengths=x_lengths)
 
+                # Remove batch dimension if present (some model versions return (1, 80, T))
                 if mel.dim() == 3:
-                    mel = mel.squeeze(0)
+                    mel = mel.squeeze(0)   # Now shape (80, T)
 
-                # Detach and move to CPU for TensorBoard logging
+                # Move to CPU and detach from computation graph (no grad tracking needed)
                 mel = mel.detach().cpu()
 
-                # Log mel-spectrogram as image (mel: n_mel_channels x T)
+                # Normalize mel-spectrogram using a fixed/global range so TensorBoard
+                # images are comparable across different samples and epochs.
+                # Prefer dataset-wide statistics from config when available.
+                mel_min = float(self.config.get('tensorboard_mel_min', -11.5))
+                mel_max = float(self.config.get('tensorboard_mel_max', 2.5))
+                if mel_max <= mel_min:
+                    raise ValueError("tensorboard_mel_max must be greater than tensorboard_mel_min")
+                mel = mel.clamp(min=mel_min, max=mel_max)
+                mel = (mel - mel_min) / (mel_max - mel_min)
+
+                # Expand to 3D for TensorBoard: (C, H, W) = (1, 80, T)
+                # TensorBoard expects format: (channels, height, width)
+                mel = mel.unsqueeze(0)
+
+                # Log as image heatmap in TensorBoard
                 self.writer.add_image(
-                    tag=f"sample_mel_{i}",
-                    img_tensor=mel,
-                    global_step=epoch,
+                    tag=f"sample_mel_{i}",           # Unique tag for each sample
+                    img_tensor=mel,                   # Normalized mel-spectrogram
+                    global_step=epoch,                # X-axis: training step/epoch
+                    dataformats="CHW",                # Channel-Height-Width format
                 )
 
             except Exception as e:
-                print(f"TensorBoard audio logging failed: {e}")
+                # Fail gracefully: log error but don't crash training
+                print(f"TensorBoard mel logging failed: {e}")
 
+        # Switch back to training mode (re-enables dropout, batch norm updates, etc.)
         self.model.train()
     
     def save_checkpoint(self):

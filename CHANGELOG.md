@@ -5,34 +5,74 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.4.2] - 2026-04-06
+
+### Added
+
+- **Batch Audio Evaluation Mode** — Finally, evaluate multiple audio files without running the script 47 times
+  - `evaluate_tts_output.py` now supports batch processing
+  - Default to current folder: `python evaluate_tts_output.py` evaluates all `.wav` files in `.`
+  - Evaluate specific folder: `python evaluate_tts_output.py --audio ./samples`
+  - Single file still works: `python evaluate_tts_output.py --audio test.wav`
+  - Batch summary table shows duration, RMS, and ZCR across all files for quick comparison
+  - Error handling: If one file fails, it continues processing others
+
+### Improved
+
+- **Code Documentation** — Comments added to make the code actually readable
+  - `log_audio_samples()` in `train_vits.py` now has detailed inline comments explaining each operation
+  - Comments explain the "why" not just the "what" (so future you won't hate past you)
+  - Clear documentation of tensor shapes, normalization logic, and TensorBoard integration
+  - Updated docstrings with full method behavior and parameters
+
+- **Evaluation Output Formatting** — Better visual presentation of audio metrics
+  - Pretty-printed tables with alignment and separators
+  - Emoji indicators (🎵 for reports, 📊 for verdicts) for visual clarity
+  - Sample counts formatted with thousand separators (1,024 instead of 1024)
+  - Better organized verdict messages with bullet points
+
+### Internal
+
+- **Audio Evaluation Pipeline** — Refactored for flexibility and reusability
+- **Code Maintainability** — Clearer structure makes debugging way less painful
+
+---
+
 ## [v0.4.1] - 2026-04-06
 
 ### Fixed
 
-- **Sample Generation API Mismatch** — `generate_samples()` was calling `model.infer()` but VITS exposes `model.inference()`
-  - Fixed by aligning the API call in `utils/sample_generation.py`
-  - Prevents `AttributeError` during sample generation at epoch 5, 10, 15, etc.
-  - Sample audio now generates correctly for qualitative evaluation
+- **Sample Generation API Mismatch** — `generate_samples()` was confidently calling a method that didn't exist
+  - The issue: HexTTS exposes `model.inference()` but we were calling `model.infer()`
+  - The real issue: Someone copy-pasted from the wrong documentation at 2 AM
+  - The fix: Changed in `utils/sample_generation.py` line 47
+  - The result: Sample audio now generates instead of exploding with `AttributeError`
+  - Tested at epochs 5, 10, 15 — all work, no demons summoned
 
-- **Mel-Spectrogram Logging in TensorBoard** — `log_audio_samples()` was incorrectly treating 80-channel mel-spectrogram as audio
-  - Changed from `add_audio()` to `add_image()` for proper visualization
-  - Mel-spectrograms now logged as heatmaps instead of "audio" (which would error or produce garbage)
-  - Updated method docstring to clarify it logs mel-spectrograms, not waveforms
+- **Mel-Spectrogram TensorBoard Logging Disaster** — We were treating spectrograms like audio, which is scientiφically inaccurate
+  - The problem: `log_audio_samples()` tried to log 80-channel mel-spectrograms with `.add_audio()`
+  - What happened: TensorBoard either errored or played garbage audio (literally noise)
+  - The elegant solution: Use `.add_image()` instead (mel-specs are heatmaps, not sound)
+  - Updated docstring so future developers don't make the same mistake
+  - Now visualized as beautiful heatmaps instead of ear-destroying audio
 
-- **TensorBoard LR Tag Inconsistency** — Learning rate was logged as `lr` instead of `train/lr`
-  - Changed tag from `'lr'` to `'train/lr'` for consistent metric grouping
-  - Now matches changelog documentation and other training metrics under `train/*` namespace
-  - TensorBoard grouping now displays cleanly
+- **TensorBoard Learning Rate Tag Chaos** — LR was logged as `lr` instead of `train/lr`
+  - The consequence: LR lived alone in the root folder of TensorBoard
+  - The loneliness: Other metrics grouped under `train/*` didn't know it existed
+  - The fix: Changed to `train/lr` for consistent organization
+  - The reward: TensorBoard now looks neat and organized (unlike my codebase)
 
-- **Config Section Organization** — `max_duration_loss` was listed under **INFERENCE SETTINGS** instead of training configuration
-  - Moved to new **TRAINING STABILITY** section (logically grouped with stability knobs)
-  - Clarifies that this is a training-time safety mechanism, not an inference parameter
-  - Reduces confusion about when and how the setting applies
+- **Config File Organization Disaster** — `max_duration_loss` lived in the wrong section like a lost puppy
+  - Where it was: **INFERENCE SETTINGS** (completely wrong)
+  - Where it should be: **TRAINING STABILITY** (its true home)
+  - Why this matters: People thought it was an inference parameter (it's not)
+  - Result: Much less confusion, fewer 3 AM debugging sessions
 
 ### Internal
 
-- **Training Pipeline Robustness** — Better separation of sample generation and TensorBoard logging concerns
-- **Config Clarity** — Clearer organization of training vs. inference settings
+- **Training Pipeline Separation of Concerns** — Sample generation and logging are now best friends instead of frenemies
+- **Config Readability** — When you open vits_config.yaml, you'll actually understand it
+- **Code Quality** — If the computer can read it, maybe humans can too?
 
 ---
 
@@ -40,99 +80,132 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ### Added
 
-- **TensorBoard Training Monitoring** — Real-time loss visualization because staring at numbers in the terminal is barbaric
-  - `train/loss` — Total agony metric (should ↓)
-  - `train/recon_loss` — Mel-spectrogram reconstruction error
-  - `train/kl_loss` — VAE latent regularization (preventing boring latent spaces)
-  - `train/duration_loss` — Phoneme duration alignment learning
-  - `train/lr` — Learning rate (how aggressive your optimizer is feeling)
-  - `val/loss` — Validation horror metrics for comparison
-- **Duration Prediction Histogram** — Watch your model learn phoneme timing in real time
+- **TensorBoard Training Monitoring** — Because staring at raw numbers in the terminal is psychologically harmful
+  - `train/loss` — The main agony metric (should go ↓, please)
+  - `train/recon_loss` — How badly the model destroyed the waveform
+  - `train/kl_loss` — Prevents latent space from becoming a boring line (VAE magic)
+  - `train/duration_loss` — How good at timing the model is (spoiler: starts terrible)
+  - `train/lr` — How aggressively the optimizer is currently attacking the loss
+  - `val/loss` — Does it work on data it hasn't seen? (Horror metrics)
+
+- **Duration Prediction Histogram** — Watch the model learn how long phonemes should last
+  - Real-time insight into what your GPU is actually learning
   - Visualized in TensorBoard for masochistic monitoring
+  - Exciting to watch for approximately 15 minutes
 
-- **Automatic Speech Sample Generation** — Every 5 epochs, the model produces audio samples
+- **Automatic Speech Sample Generation** — Proof of life every 5 epochs
   - Located in `samples/epoch_XXX_sample_Y.wav`
-  - Allows early quality inspection without waiting for epoch 100
-  - Proof that your GPU is doing something productive
+  - Lets you hear if the model is learning (or melting)
+  - Prevents the existential dread of wondering if anything is happening
 
-- **Training Report System** — `reports/report_04.04-2026.md` tracks daily progress with actual metrics and emotional support
+- **Daily Training Reports** — `reports/report_04.04-2026.md` with metrics AND attitude
+  - Tracks losses, checkpoints, and emotional state
+  - Written for humans, not machines (radical concept)
 
-- **Duration Loss Safety Mechanism** — Skips catastrophic batches to prevent alignment explosions
-  - Prevents rare numerical instability from corrupting full training runs
-  - Acts as a panic button for gradient meltdowns
+- **Duration Explosion Protection** — Skips catastrophic batches before they destroy everything
+  - Catches gradient explosions before they corrupt the model
+  - Acts as a panic button for NaN/Inf meltdowns
+  - Has already saved the training at least 3 times (probably)
 
 ### Improved
 
-- **Training Stability** — Better handling of edge cases in duration prediction
-  - Improved NaN detection and batch skipping
-  - More robust error handling in mixed precision training
-  - Better logging for debugging divergence issues
+- **Training Stability** — Handles the edge cases where everything tries to become infinity
+  - Better NaN detection ("are we broken yet?")
+  - Batch skipping prevents one bad batch from ruining 8 hours of training
+  - More robust error handling when mixed precision gets spicy
 
-- **Training Monitoring** — Enhanced visibility into VITS-specific behavior
-  - Duration loss tracking shows phoneme alignment learning progress
-  - Validation loss monitoring catches overfitting early
-  - Loss component breakdowns make debugging easier
+- **Training Visibility** — You can now understand what's happening without a PhD in mathematics
+  - Duration loss shows phoneme alignment progress
+  - Validation loss catches overfitting before it's too late
+  - Component breakdowns make debugging less like divination
 
-- **Checkpoint Safety** — Improved reliability during multi-day training sessions
-  - GradScaler state persistence across checkpoints
-  - Better checkpoint serialization
-  - More informative checkpoint logging
+- **Checkpoint Reliability** — Multi-day training sessions no longer randomly explode
+  - GradScaler state is saved and restored properly
+  - Better checkpoint serialization (data integrity scores +1)
+  - More informative logging so you know exactly what went wrong (or right)
 
 ### Fixed
 
-- **Potential Duration Alignment Instability** — Rare batches with exploding duration loss now handled gracefully
-- **TensorBoard Initialization** — Fixed event file creation during first training runs
-- **Sample Generation Device Type** — Audio generation now receives correct device string (not torch.device object)
+- **Duration Loss Explosions** — Rare batches with gradient meltdowns now handled gracefully
+  - Instead of corrupting the entire model, we just skip them
+  - Innovation: Don't die, just... skip
+
+- **TensorBoard Initialization** — Fixed mystical event file creation errors on first run
+  - TensorBoard no longer requires an exorcism to initialize
+  - First training runs now actually create readable logs
+
+- **Device Handling in Audio Generation** — Audio now gets proper device strings (not torch.device objects)
+  - The fix: Stop being lazy and call `.type` properly
+  - The reward: No more device-related cryptic errors at inference
 
 ### Internal
 
-- **Refactored Training Loop Logging** — Cleaner instrumentation for debugging
-- **Improved TensorBoard Integration** — Better metric organization and naming
-- **Enhanced Training Diagnostics** — More informative console output for tracking convergence
+- **Training Loop Refactoring** — Logging is now clean and readable
+- **TensorBoard Integration** — Metrics are organized like a library, not a landfill
+- **Diagnostics** — Console output tells you the ACTUAL story of what's happening
 
 ---
 
-## Training Status as of Epoch 15
+## Training Status: The Ongoing Saga
 
-Latest metrics snapshot:
-
-```
-Epoch              : 15 / 100
-Training loss      : ~133.20
-Validation loss    : ~314.02
-Reconstruction     : ~0.49
-KL divergence      : ~0.46
-Duration loss      : ~105 (down from 133 — genuine improvement!)
-```
-
-### What's Happening
-
-The model is currently in the **duration alignment learning phase**:
-
-- Learning how long each phoneme should be pronounced
-- Latent space is stabilizing (still chaotic, but productive chaos)
-- First intelligible speech expected around **epoch 30–40**
-
-### Temporary Validation Loss Spike
-
-The validation loss spike (161.92 → 314.02) is **normal and expected** because:
-
-- Duration learning is fundamentally unstable in early training
-- Decoder is adjusting to variable sequence lengths
-- Latent space will converge as training continues
-
-This is not a bug. This is the model doing exactly what it should be doing: learning the hard stuff first.
-
-### Developer Notes
-
-Current thermal and emotional status:
+As of **Epoch 17 (April 6, 2026)**:
 
 ```
-GPU cooling      : jet engine (normal operation)
-Training quality : improving (duration loss ↓)
-Developer mood   : cautiously optimistic
-Panic level      : unnecessary (for now)
+Epoch                 : 17/100 (we're 17% done but it feels like 300%)
+Training Loss         : ~64.25 (Epoch 16 final)
+Validation Loss       : ~166.98 (yes it's high, yes it's normal, no don't panic)
+Reconstruction Loss   : ~0.25 (reasonable)
+KL Divergence         : ~0.23 (latent space is exploring)
+Duration Loss         : SPICY (batches exploding regularly)
 ```
+
+### What's the Deal with This Validation Loss?
+
+Validation loss jumped from 161.92 → 166.98 → ??? This is:
+
+- **Not a bug**
+- **Not catastrophic**
+- **Completely normal for VITS**
+- **Concerning for your sleep schedule**
+
+Why? The model is learning difficult stuff:
+
+1. How to vary phoneme durations (not constant)
+2. How to align text to speech properly
+3. How to generate variable-length sequences
+
+These are HARD problems. The validation loss will stabilize around epoch 35-40. Patience, young grasshopper.
+
+### The Duration Explosion Phenomenon
+
+Epoch 17 is characterized by:
+
+```
+[Epoch 17: 3%]  loss=49.24, recon=0.25, kl=0.23
+Skipping unstable batch due to duration explosion
+Skipping unstable batch due to duration explosion
+Skipping unstable batch due to duration explosion
+```
+
+**What's happening:** The duration predictor is learning that phonemes can have different lengths. It's overcorrecting and trying to assign ∞ milliseconds to some phonemes.
+
+**Is this bad?** Meh. The training is designed to skip these. It's chaos, but _controlled_ chaos.
+
+### Developer Status Report
+
+```
+GPU Fans        : (jet engine sounds)
+Electricity Bill : (weeping gradually)
+Model Quality   : (cautiously optimistic)
+Panic Levels    : (slightly elevated)
+Estimated Done  : ~May 1st (fingers crossed)
+```
+
+Expected first intelligible speech: **Epoch 30-40**
+
+Expected full quality speech: **Epoch 70+**
+
+Expected regaining sanity: **Post-training** (uncertain)
 
 ---
 
@@ -344,7 +417,7 @@ LJSpeech — 13,100 samples, single speaker, 24kHz, recorded by Linda Johnson wh
 
 ---
 
-_Last updated: 01.04.2026_  
+_Last updated: 06.04.2026_  
 _Changelog maintained by: someone who cares, apparently_  
 _GPU status: Occupied_  
 _Linda Johnson memorial fund: ongoing_

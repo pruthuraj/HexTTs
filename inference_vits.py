@@ -7,7 +7,6 @@ import torch
 import numpy as np
 import librosa
 import soundfile as sf
-from pathlib import Path
 import argparse
 from typing import Tuple, Optional
 import yaml
@@ -107,26 +106,28 @@ class VITSInference:
         return torch.LongTensor(ids).unsqueeze(0).to(self.device)
     
     @torch.no_grad()
-    def generate_mel_spectrogram(self, phoneme_ids: torch.Tensor) -> np.ndarray:
+    def generate_mel_spectrogram(self, phoneme_ids: torch.Tensor, duration_scale: float = 1.0, noise_scale: float = 0.3) -> np.ndarray:
         """
         Generate mel-spectrogram from phoneme IDs
         
         Args:
             phoneme_ids: tensor of shape (1, seq_len)
+            duration_scale: scale for predicted durations
+            noise_scale: scale for latent noise
         
         Returns:
             mel-spectrogram of shape (n_mel_channels, time_steps)
         """
         
-        print("Entering model forward...")
-        outputs = self.model(phoneme_ids)
-        print("Model forward completed.")
-
-        # Check if 'predicted_mel' is in outputs
-        if 'predicted_mel' not in outputs:
-            raise ValueError("Model output missing 'predicted_mel'")
-
-        mel_spec = outputs['predicted_mel']
+        print("Entering model inference...")
+        # Ensure phoneme_ids is on the correct device and has the right shape
+        if phoneme_ids.dim() != 2 or phoneme_ids.size(0) != 1:
+            raise ValueError(f"Expected phoneme_ids of shape (1, seq_len), got {phoneme_ids.shape}")
+        print(f"Phoneme IDs shape: {phoneme_ids.shape}, device: {phoneme_ids.device}")
+        # Generate mel-spectrogram
+        lengths = torch.LongTensor([phoneme_ids.size(1)]).to(self.device)
+        mel_spec = self.model.inference(phoneme_ids, lengths=lengths, duration_scale=duration_scale, noise_scale=noise_scale)
+        print("Model inference completed.")
 
 
         # Check for NaN or Inf values in the predicted mel spectrogram
@@ -166,12 +167,14 @@ class VITSInference:
             fmax=self.mel_f_max
         )
         
-        # Griffin-Lim to convert spectrogram to waveform
+        # Griffin-Lim to convert spectrogram to waveform - adjust parameters for better quality
         audio = librosa.griffinlim(
             spectrogram,
-            n_iter=100,
+            n_iter=128,
             hop_length=self.mel_hop_length,
-            win_length=self.mel_win_length
+            win_length=self.mel_win_length,
+            momentum=0.99,
+            init="random"
         )
         
         # Normalize
@@ -179,15 +182,22 @@ class VITSInference:
         
         return audio
     
-    def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
+    def synthesize(
+        self,
+        text: str,
+        duration_scale: float = 1.0,
+        noise_scale: float = 0.3
+    ) -> Tuple[np.ndarray, int]:
         """
         Synthesize speech from text
         
-        Args:
+        Args:   
             text: input text
+            duration_scale: scale for predicted durations
+            noise_scale: scale for latent noise
         
         Returns:
-            (audio, sample_rate)
+            audio waveform, sample rate
         """
         print(f"Input text: {text}")
         
@@ -201,7 +211,11 @@ class VITSInference:
         
         # Mel-spectrogram generation
         try:
-            mel_spec = self.generate_mel_spectrogram(phoneme_ids)
+            mel_spec = self.generate_mel_spectrogram(
+                phoneme_ids,
+                duration_scale=duration_scale,
+                noise_scale=noise_scale
+            )
             print(f"Mel-spectrogram shape: {mel_spec.shape}")
         except Exception as e:
             print(f"Error during mel generation: {e}")
@@ -224,6 +238,10 @@ def main():
                        help='Path to model checkpoint')
     parser.add_argument('--config', type=str, default='vits_config.yaml',
                        help='Path to config file')
+    parser.add_argument('--duration_scale', type=float, default=1.0,
+                   help='Scale predicted durations (higher = slower speech)')
+    parser.add_argument('--noise_scale', type=float, default=0.3,
+                   help='Latent noise scale (lower = cleaner / less varied)')
     parser.add_argument('--text', type=str, required=True,
                        help='Text to synthesize')
     parser.add_argument('--output', type=str, default='output.wav',
@@ -246,7 +264,11 @@ def main():
     inference = VITSInference(args.checkpoint, config, device)
     
     # Synthesize
-    audio, sr = inference.synthesize(args.text)
+    audio, sr = inference.synthesize(
+        args.text,
+        duration_scale=args.duration_scale,
+        noise_scale=args.noise_scale,
+    )
     
     # Save audio
     sf.write(args.output, audio, sr)

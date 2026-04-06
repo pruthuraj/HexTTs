@@ -1,6 +1,6 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.4.1_
+_v0.4.2_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 
@@ -62,93 +62,124 @@ HexTTs/
 ### Step 1: Create Virtual Environment
 
 ```bash
-# Isolate yourself from the chaos
+# Build a protective bubble around yourself from the Python chaos
 python -m venv venv
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # Linux/Mac
+venv\Scripts\activate        # Windows (the suffering OS)
+source venv/bin/activate     # Linux/Mac (the enlightened paths)
 ```
 
-### Step 2: Install PyTorch (The REAL PyTorch, with CUDA)
+### Step 2: Install PyTorch (CUDA Edition — The ONLY Way)
 
 ```bash
-# This is the CORRECT way (don't @ me, CPU users)
+# This is the way. The ONLY way. Don't use CPU PyTorch unless you hate:
+# - Time
+# - Productivity
+# - Your GPU (which would be sad)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Verify it actually got CUDA support:
+VERIFY IT HAS CUDA POWERS:
 
 ```bash
 python -c "import torch; print(torch.cuda.is_available())"
-# Should print: True
-# If it prints False, you installed the sad version of PyTorch. Start over.
+# Output: True     ← You are enlightened ✓
+# Output: False    ← You installed the depression version, start over ✗
+# Output: Error    ← Something has gone very wrong
 ```
 
-### Step 3: Install Everything Else
+### Step 3: Install The Entire Ecosystem
 
 ```bash
 pip install -r requirements.txt
+# This will:
+# 1. Download 47 different things you've never heard of
+# 2. Compile 3 of them from source (patience required)
+# 3. Mysteriously resolve 2 circular dependencies
+# 4. Ask "are you SURE?" in version conflicts (you are, just say yes)
 ```
 
-The magic incantations:
+The Dependency Grimoire:
 
-- **librosa**: For pretending you understand spectrograms
-- **g2p_en**: Converts "the quick brown fox" into "DH AH K W IH K BR AW N F AA K S" (very slowly)
-- **numpy**: Used everywhere. Breathes numpy.
-- **matplotlib**: For when you want to stare at loss curves and feel something
-- **tensorboard**: Real-time loss anxiety, now with graphs
+- **librosa**: Understands audio better than you ever will. Also slower than continental drift.
+- **g2p_en**: Translates "hello" → "HH EH L OW". Somehow that's relevant to TTS. Don't ask.
+- **numpy**: Exists in every single Python project ever. Probably powers your dreams too.
+- **matplotlib**: For beautiful loss curves that will make you weep. Especially the upward ones.
+- **tensorboard**: Real-time suffering visualization. Watch your metrics live. Find out about failures in real-time instead of later.
 
 ---
 
-## Data Prep: "Why Is Your Dataset Like This?"
+## Data Prep: "Okay But Why Is Your Dataset Like THIS?"
 
 ```bash
-# Download LJSpeech manually (13GB) from:
-# https://keithito.com/LJ-Speech-Dataset/
+# Step 1: Download LJSpeech-1.1 (13GB of vocal patience)
+# From: https://keithito.com/LJ-Speech-Dataset/
+# (Warning: takes FOREVER. Go get coffee. A lot of coffee.)
 
-# Place it in: data/LJSpeech-1.1
+# Step 2: Place it here (exactly):
+# data/LJSpeech-1.1
+# (The script is VERY particular about folder names)
 
-# Validate it's not corrupted or haunted
+# Step 3: Validate the dataset isn't cursed
 python validate_dataset.py ./data/LJSpeech-1.1
+# This checks for:
+# ✓ Corrupted audio files
+# ✓ Mismatched transcripts
+# ✓ Ancient curses
+# ✓ Digital demons (probably won't find any but who knows)
 
-# Convert words to phonemes (this is important, I swear)
+# Step 4: Convert words into phoneme sorcery
 python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
+# This is where the magic happens (or the chaos, depending on your perspective)
 ```
 
-**What happens:** The script reads 13,100 transcripts, turns them into phonemes, and creates train/val splits. It's less exciting than it sounds. The output is:
+**What's Actually Happening Here:**
+
+The script reads 13,100 voice transcripts and converts them into phoneme sequences. Why? Because neural networks think in phonemes, not words. It's like speaking in a secret code that only AI understands.
+
+Output files:
 
 ```
-train.txt        ← ~12,445 phoneme entries (the main event)
-val.txt          ← ~655 entries (the understudy)
-phoneme sequences ← cryptic strings of capitalized nonsense that somehow become speech
+train.txt        ← 12,445 training examples (the A-team)
+val.txt          ← 655 validation examples (the B-team)
+phoneme sequences ← Looks like: P R UW M O D EL IZ T R AY N D
+                   Translation: ???
+                   Actually Works: Yes, inexplicably
 ```
 
 ---
 
-## Speed Optimization: "Wait, Training Can Be FASTER?"
+## Speed Optimization: "WAIT, This Can Train 3x FASTER?!"
 
-Yes. By default, mel spectrograms are computed from scratch every single batch during training. This is like baking the same bread every time you want a sandwich. `precompute_features.py` bakes all the bread once upfront.
+**YES.** Here's the secret: By default, the training loop cooks mel-spectrograms fresh from raw audio _every single batch_. This is the computational equivalent of baking a new loaf of bread every time you want a sandwich.
+
+Solution: Bake all the bread once, then just grab slices.
 
 ```bash
 python precompute_features.py --config vits_config.yaml
+# This will:
+# 1. Load all 13,100 audio files (takes forever)
+# 2. Convert to mel-spectrograms (takes more forever)
+# 3. Cache them to disk (takes even MORE forever)
+# 4. Be ABSOLUTELY WORTH IT (training speeds up 3x)
 ```
 
-This creates:
+Creates:
 
 ```
 data/ljspeech_prepared/cache/
-    mels/    ← Precomputed mel spectrograms (the bread)
-    ids/     ← File identifiers (the labels on the bread)
+    mels/    ← Your bread factory (computed once, used forever)
+    ids/     ← Reference numbers (which slice is which)
 ```
 
-### Enable the Cached Loader
+### Activate the Speed Boost
 
-In `train_vits.py`, swap this one line:
+In `train_vits.py`, make this ONE change:
 
 ```python
-# SLOW (the old way, computing mels fresh every batch like a masochist)
+#  SLOW MODE (don't use this, it's suffering)
 from vits_data import create_dataloaders
 
-# FAST (the new way, reading pre-baked mels like a rational person)
+#  WARP SPEED (3x faster, enlightenment achieved)
 from vits_data_cached import create_dataloaders
 ```
 
@@ -297,30 +328,31 @@ Did you actually swap `vits_data` to `vits_data_cached` in `train_vits.py`? Go l
 
 ## File Descriptions (TL;DR Edition)
 
-| File                     | What It Does                                     | When You Care                   |
-| ------------------------ | ------------------------------------------------ | ------------------------------- |
-| `train_vits.py`          | Trains the entire model                          | Always                          |
-| `inference_vits.py`      | Makes audio from text                            | After training                  |
-| `tts_app.py`             | Pretty interface for making audio                | When you're tired of CLI        |
-| `vits_model.py`          | 45 million parameters of confusion               | Never (it's magic, don't touch) |
-| `vits_data.py`           | Original data loader                             | During training (slow version)  |
-| `vits_data_cached.py`    | Faster data loader                               | During training (smart version) |
-| `vits_config.yaml`       | "How do I balance quality vs speed vs survival?" | Before training                 |
-| `prepare_data.py`        | Converts transcripts to phonemes                 | Once, then forget it            |
-| `validate_dataset.py`    | "Is my data okay?"                               | When paranoid                   |
-| `precompute_features.py` | Pre-bakes mel spectrograms                       | Before training (do this)       |
-| `view_spectrogram.py`    | Visualize mel spectrograms                       | When debugging audio issues     |
-| `test_setup.py`          | Verify PyTorch/CUDA installed correctly          | On first setup                  |
-| `requirements.txt`       | All your dependencies                            | During pip install              |
-| `CHANGELOG.md`           | What changed between versions                    | When things break mysteriously  |
-| `checkpoints/`           | Saved model states                               | Always (precious cargo)         |
-| `logs/`                  | TensorBoard event files                          | During/after training           |
-| `tts_output/`            | Generated audio files                            | After inference                 |
-| `diagram/`               | Architecture diagrams and flowcharts             | When explaining to others       |
-| `doc/`                   | Extended documentation                           | When README isn't enough        |
-| `notes/`                 | Development notes, patches, and lessons learned  | When troubleshooting            |
-| `deprecated/`            | Old code nobody knows how to delete              | Never (for archaeologists only) |
-| `scripts/`               | Utility scripts and helper tools                 | When needed, god help you       |
+| File                     | What It Actually Does (Honest Edition)                                     | When You'll Actually Care                                   |
+| ------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `train_vits.py`          | 45M parameters of pure chaos learning to speak (with comments now!)        | Always. Forever. It haunts your nightmares                  |
+| `inference_vits.py`      | "Please convert my text to robot sounds" (it tries its best, bless it)     | After training (or when you give up)                        |
+| `tts_app.py`             | GUI wrapper for people afraid of command lines (aka cowards, endearing)    | When you're tired of suffering in Terminal                  |
+| `vits_model.py`          | The actual neural network brain (touch it and it breaks, don't ask how)    | Never. Ever. Seriously. Don't.                              |
+| `vits_data.py`           | Original data loader (slow enough to watch paint dry)                      | During training (the masochist path)                        |
+| `vits_data_cached.py`    | FAST data loader (seriously use this one instead of suffering)             | During training (the enlightened path)                      |
+| `vits_config.yaml`       | "How much suffering do I want today?" (knobs to destroy your GPU)          | Before training (read it carefully)                         |
+| `prepare_data.py`        | Converts Linda Johnson's words into phoneme soup (alphabet chaos)          | Once. Then pray it worked. Then run it again when it didn't |
+| `validate_dataset.py`    | "Is my data broken?" (spoiler: yes, but in acceptable ways)                | When paranoid. Which is always.                             |
+| `precompute_features.py` | Pre-bakes mel spectrograms so training doesn't die (PLEASE RUN THIS)       | Before training (seriously, do it)                          |
+| `view_spectrogram.py`    | Stare at pretty frequency heatmaps and pretend you understand them         | When debugging or procrastinating                           |
+| `evaluate_tts_output.py` | Audio quality analyzer (single file or batch mode, now SUUUPER flexible)   | After inference (to judge your creation)                    |
+| `test_setup.py`          | "Does CUDA actually exist or did I hallucinate it?" (verification script)  | On first setup (and sometimes at 3 AM)                      |
+| `requirements.txt`       | All your dependencies (a Pandora's box of suffering)                       | During `pip install` (prepare for pain)                     |
+| `CHANGELOG.md`           | A historical record of your poor decisions over time                       | When mysteriously everything breaks                         |
+| `checkpoints/`           | Nuclear launch codes, but for neural networks (200MB each, delete wisely)  | Always. Treat these like your children.                     |
+| `logs/`                  | TensorBoard metrics (watch your loss curve either ↓ or ↑ very ominously)   | During/after training (obsess over it)                      |
+| `tts_output/`            | Where your robot's voice lives (cherish it, it took $500 in electricity)   | After inference (go show your therapist)                    |
+| `diagram/`               | Pretty architecture diagrams (for impressing people who don't know better) | When explaining to non-AI people (futile)                   |
+| `doc/`                   | Extended documentation (the README you never read, but should)             | When README isn't enough (it will be)                       |
+| `notes/`                 | Patch notes, setup guides, lessons learned at 2 AM (your suffering diary)  | When troubleshooting (aka all the time)                     |
+| `deprecated/`            | Graveyard of old code (archaeology/horror museum combo)                    | Never. For. The. Love. Of. God. Never.                      |
+| `scripts/`               | Miscellaneous utility scripts (person who organized these: questionable)   | When you remember they exist (you won't)                    |
 
 ---
 
@@ -665,7 +697,7 @@ Explain what a mel spectrogram is at a dinner party
 
 ---
 
-_Last updated: April 4, 2026_  
+_Last updated: April 6, 2026_ (v0.4.2 — Batch evaluation & better code documentation)  
 _GPU cooling status: CRITICAL_  
 _Electricity bill status: DO NOT OPEN_  
 _vits_data_cached.py status: Use it. Seriously._
