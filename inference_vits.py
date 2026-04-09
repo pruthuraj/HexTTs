@@ -3,6 +3,7 @@ Inference Script for VITS TTS
 Generates speech from text using trained model
 """
 
+import warnings
 import torch
 import numpy as np
 import librosa
@@ -36,8 +37,18 @@ class VITSInference:
         self.model = VITS(config).to(device)
         self.model.eval()
 
-        # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        # Load checkpoint - prefer weights_only=True for security;
+        # fall back to weights_only=False only for legacy checkpoints
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        except Exception:
+            warnings.warn(
+                "Could not load checkpoint with weights_only=True; "
+                "falling back to weights_only=False. "
+                "Ensure the checkpoint file is trusted.",
+                UserWarning,
+            )
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         # Allow loading older checkpoints that do not contain PostNet weights
         missing_keys, unexpected_keys = self.model.load_state_dict(
@@ -45,16 +56,18 @@ class VITSInference:
             strict=False
         )
 
-
-        # if missing_keys:
-        #     print("\nMissing keys while loading checkpoint:")
-        #     for k in missing_keys:
-        #         print(f"  {k}")
-
-        # if unexpected_keys:
-        #     print("\nUnexpected keys while loading checkpoint:")
-        #     for k in unexpected_keys:
-        #         print(f"  {k}")
+        # Validate that any missing keys are only the expected PostNet keys
+        unexpected_missing = [k for k in missing_keys if not k.startswith("postnet.")]
+        if unexpected_missing:
+            warnings.warn(
+                f"Unexpected missing keys in checkpoint (non-PostNet): {unexpected_missing}",
+                UserWarning,
+            )
+        if unexpected_keys:
+            warnings.warn(
+                f"Unexpected keys found in checkpoint (not in model): {unexpected_keys}",
+                UserWarning,
+            )
 
         print("Model loaded successfully!")
 
