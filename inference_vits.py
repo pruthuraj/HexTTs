@@ -3,6 +3,7 @@ Inference Script for VITS TTS
 Generates speech from text using trained model
 """
 
+import pickle
 import warnings
 import torch
 import numpy as np
@@ -41,7 +42,7 @@ class VITSInference:
         # fall back to weights_only=False only for legacy checkpoints
         try:
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except Exception:
+        except (RuntimeError, pickle.UnpicklingError):
             warnings.warn(
                 "Could not load checkpoint with weights_only=True; "
                 "falling back to weights_only=False. "
@@ -57,10 +58,10 @@ class VITSInference:
         )
 
         # Validate that any missing keys are only the expected PostNet keys
-        unexpected_missing = [k for k in missing_keys if not k.startswith("postnet.")]
-        if unexpected_missing:
+        non_postnet_missing_keys = [k for k in missing_keys if not k.startswith("postnet.")]
+        if non_postnet_missing_keys:
             warnings.warn(
-                f"Unexpected missing keys in checkpoint (non-PostNet): {unexpected_missing}",
+                f"Unexpected missing keys in checkpoint (non-PostNet): {non_postnet_missing_keys}",
                 UserWarning,
             )
         if unexpected_keys:
