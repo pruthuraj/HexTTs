@@ -258,15 +258,20 @@ class Decoder(nn.Module):
             mel-spectrogram (batch_size, mel_channels, time_steps)
         """
         x = self.projection(z)
-        
+        residual = x
+
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(x)
-        
+
+        # Residual skip helps preserve coarse latent structure
+        x = x + residual
+
         # Output mel-spectrogram
-        mel = self.output(x)  # (batch_size, time_steps, mel_channels)
-        mel = mel.transpose(1, 2)  # (batch_size, mel_channels, time_steps)
-        
+        mel = self.output(x)
+        mel = torch.tanh(mel)
+        mel = mel.transpose(1, 2)
+
         return mel
 
 # New v0.4.3: PostNet for mel-spectrogram refinement

@@ -88,8 +88,54 @@ class VITSTrainer:
         self.global_step = 0
         self.best_val_loss = float('inf')
         self.patience_counter = 0
+
+    @staticmethod
+    def _make_length_mask(lengths: torch.Tensor, max_len: int) -> torch.Tensor:
+        """Create boolean mask where True marks valid (non-pad) token positions."""
+        return torch.arange(max_len, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(1)
+
+    @staticmethod
+    def _build_pseudo_duration_targets(
+        phoneme_lengths: torch.Tensor,
+        mel_lengths: torch.Tensor,
+        max_seq_len: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """
+        Build token-level pseudo duration targets with sum-preserving allocation.
+
+        For each sample:
+          base = T // N
+          remainder = T % N
+          first `remainder` tokens get base + 1, others get base
+
+        This guarantees sum(target[:N]) == T exactly.
+        """
+        batch_size = phoneme_lengths.size(0)
+        targets = torch.zeros(batch_size, max_seq_len, dtype=torch.long, device=device)
+
+        for i in range(batch_size):
+            n_tokens = max(1, int(phoneme_lengths[i].item()))
+            n_tokens = min(n_tokens, max_seq_len)
+            total_frames = max(0, int(mel_lengths[i].item()))
+
+            base = total_frames // n_tokens
+            remainder = total_frames % n_tokens
+
+            targets[i, :n_tokens] = base
+            if remainder > 0:
+                targets[i, :remainder] += 1
+
+        return targets
     
-    def compute_loss(self, outputs: dict, mel_spec: torch.Tensor, mel_lengths: torch.Tensor, config: dict) -> dict:
+    def compute_loss(
+        self,
+        outputs: dict,
+        mel_spec: torch.Tensor,
+        phoneme_lengths: torch.Tensor,
+        mel_lengths: torch.Tensor,
+        config: dict,
+    ) -> dict:
         """
         Compute total loss
         
@@ -130,38 +176,40 @@ class VITSTrainer:
         else:
             kl_loss = torch.tensor(0.0, device=predicted_mel.device)
         
-        # 3. Duration loss (not computed here as we don't have ground truth durations)
-        # In a real implementation, you'd extract durations from alignments
-        # duration_loss = torch.tensor(0.0, device=predicted_mel.device) # Old
-        
-        # v0.4.2 : duration supervision by matching total predicted length to mel length
-        # pred_duration_sum = duration.sum(dim=1)
-        # target_duration_sum = mel_lengths.float()
-        # duration_loss = nn.functional.l1_loss(
-        #     pred_duration_sum, target_duration_sum, reduction="mean"
-        # )
-        
-        
-        # new v0.4.3: relative error supervision with clamping to handle outliers and improve stability
-        # Sum predicted token durations to get total predicted mel length per sample.
-        # Handle both possible shapes:
-        # - (B, T, 1) -> sum over T then squeeze trailing dim
-        # - (B, T)    -> sum over T directly
-        pred_duration_sum = duration.sum(dim=1)
+        # 3. Duration loss: token-level pseudo supervision + global sum supervision
+        pred = duration
+        max_seq_len = pred.size(1)
 
-        # Ground-truth total mel lengths from the batch (cast to float for loss math)
+        target = self._build_pseudo_duration_targets(
+            phoneme_lengths=phoneme_lengths,
+            mel_lengths=mel_lengths,
+            max_seq_len=max_seq_len,
+            device=pred.device,
+        )
+
+        token_mask = self._make_length_mask(phoneme_lengths, max_seq_len)
+        token_mask_f = token_mask.float()
+
+        # Token-level SmoothL1 over valid (non-pad) tokens only
+        token_loss_raw = nn.functional.smooth_l1_loss(
+            pred,
+            target.float(),
+            reduction='none',
+        )
+        token_loss = (token_loss_raw * token_mask_f).sum() / token_mask_f.sum().clamp_min(1.0)
+
+        # Sum-level L1 encourages total predicted duration to match mel length
+        pred_duration_sum = (pred * token_mask_f).sum(dim=1)
         target_duration_sum = mel_lengths.float()
+        sum_loss = nn.functional.l1_loss(pred_duration_sum, target_duration_sum, reduction='mean')
 
-        # Relative absolute error:
-        # |pred - target| / target
-        # Small epsilon avoids division-by-zero for any malformed zero-length targets.
-        rel_error = torch.abs(pred_duration_sum - target_duration_sum) / (target_duration_sum + 1e-6)
+        alpha = float(config.get('duration_token_alpha', 1.0))
+        beta = float(config.get('duration_sum_beta', 0.2))
+        duration_loss = alpha * token_loss + beta * sum_loss
 
-        # Clamp large outliers so unstable batches do not dominate training.
-        rel_error = torch.clamp(rel_error, max=5.0)
-
-        # Final duration loss is batch mean relative error.
-        duration_loss = rel_error.mean()
+        token_mae = (torch.abs(pred - target.float()) * token_mask_f).sum() / token_mask_f.sum().clamp_min(1.0)
+        sum_abs_error = torch.abs(pred_duration_sum - target_duration_sum)
+        speech_rate_proxy = pred_duration_sum / phoneme_lengths.float().clamp_min(1.0)
         
         
         # Weighted sum
@@ -176,9 +224,13 @@ class VITSTrainer:
             'recon_loss': recon_loss.item(),
             'kl_loss': kl_loss.item(),
             'duration_loss': duration_loss.item(),
+            'token_duration_loss': token_loss.item(),
+            'sum_duration_loss': sum_loss.item(),
             'pred_duration_sum_mean': pred_duration_sum.mean().item(),
             'target_duration_sum_mean': target_duration_sum.mean().item(),
-            'rel_error_mean': rel_error.mean().item(),
+            'token_duration_mae': token_mae.item(),
+            'sum_error_mean': sum_abs_error.mean().item(),
+            'speech_rate_proxy_mean': speech_rate_proxy.mean().item(),
         }
     
     def train_epoch(self) -> float:
@@ -211,7 +263,7 @@ class VITSTrainer:
                     )
                     # Compute loss with optional NaN protection
                     # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
-                    loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
+                    loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
                     
                     # NaN protection: skip batch if duration loss is excessively high (indicates instability)
                     # duration explosion skip” no longer works as intended 
@@ -276,12 +328,16 @@ class VITSTrainer:
                     self.writer.add_scalar('train/recon_loss', loss_dict['recon_loss'], self.global_step)
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
+                    self.writer.add_scalar('train/duration_token_loss', loss_dict['token_duration_loss'], self.global_step)
+                    self.writer.add_scalar('train/duration_sum_loss', loss_dict['sum_duration_loss'], self.global_step)
                     self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], self.global_step)
 
                     # New v0.4.3: Duration diagnostics
                     self.writer.add_scalar('train/pred_duration_sum_mean', loss_dict['pred_duration_sum_mean'], self.global_step)
                     self.writer.add_scalar('train/target_duration_sum_mean', loss_dict['target_duration_sum_mean'], self.global_step)
-                    self.writer.add_scalar('train/relative_duration_error_mean', loss_dict['rel_error_mean'], self.global_step)
+                    self.writer.add_scalar('train/token_duration_mae', loss_dict['token_duration_mae'], self.global_step)
+                    self.writer.add_scalar('train/sum_error_mean', loss_dict['sum_error_mean'], self.global_step)
+                    self.writer.add_scalar('train/pred_speech_rate_proxy', loss_dict['speech_rate_proxy_mean'], self.global_step)
                     self.writer.add_scalar('train/duration_max', outputs['duration'].max().item(), self.global_step)
                     self.writer.add_scalar('train/duration_min', outputs['duration'].min().item(), self.global_step)
 
@@ -338,7 +394,7 @@ class VITSTrainer:
                 lengths=phoneme_lengths,
             )
 
-            loss_dict = self.compute_loss(outputs, mel_spec, mel_lengths, self.config)
+            loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
             loss = loss_dict["total_loss"]
             
             # New v0.4.3: NaN protection for validation - skip batch if loss is NaN or Inf 
@@ -359,21 +415,12 @@ class VITSTrainer:
             if bad_tensor:
                 continue
             
-            # New v0.4.3: Additional validation diagnostics for duration predictions and mel outputs
             # Validation diagnostics
-            pred_duration_sum = outputs['duration'].squeeze(-1).sum(dim=1)
-
-            self.writer.add_scalar(
-                "val/pred_duration_sum_mean",
-                pred_duration_sum.mean().item(),
-                self.global_step
-            )
-
-            self.writer.add_scalar(
-                "val/target_duration_sum_mean",
-                mel_lengths.float().mean().item(),
-                self.global_step
-            )
+            self.writer.add_scalar("val/pred_duration_sum_mean", loss_dict['pred_duration_sum_mean'], self.global_step)
+            self.writer.add_scalar("val/target_duration_sum_mean", loss_dict['target_duration_sum_mean'], self.global_step)
+            self.writer.add_scalar("val/token_duration_mae", loss_dict['token_duration_mae'], self.global_step)
+            self.writer.add_scalar("val/sum_error_mean", loss_dict['sum_error_mean'], self.global_step)
+            self.writer.add_scalar("val/pred_speech_rate_proxy", loss_dict['speech_rate_proxy_mean'], self.global_step)
 
             self.writer.add_scalar(
                 "val/duration_max",

@@ -5,6 +5,115 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.4.6] - 2026-04-09
+
+### Added
+
+- **Continuation Test Automation Script** — `scripts/run_continuation_test.py`
+  - Builds a temporary continuation config from base config
+  - Resumes training from a checkpoint
+  - Extracts latest TensorBoard duration diagnostics
+  - Runs HiFi-GAN inference on fixed sentence
+  - Runs objective evaluation and prints compact summary
+
+- **New Main Flow Subcommand** — `continuation-test`
+  - Added to `scripts/main_flow.py`
+  - One command for the full continuation experiment:
+    - `python scripts/main_flow.py continuation-test --epochs 3`
+
+### Improved
+
+- **README Workflow Coverage**
+  - Updated patch notes version label to include latest automation update
+  - Added continuation-test command in simplified main-flow section
+  - Added dedicated continuation automation section with usage and behavior
+
+### Internal
+
+- Reduced manual command chaining for continuation experiments
+- Lowered risk of missing diagnostics during short resume runs
+
+---
+
+## [v0.4.5] - 2026-04-09
+
+### Added
+
+- **Simplified Main Flow Wrapper** — new `scripts/main_flow.py` so you can stop typing command-line essays
+  - `train`: wraps `train_vits.py`
+  - `infer`: wraps `inference_vits.py` (supports `--hifigan`)
+  - `eval`: wraps `evaluate_tts_output.py`
+  - `audit`: wraps dataset audit/filter flow with common threshold flags
+  - `compare`: runs Griffin-Lim vs HiFi-GAN and evaluates both in one go
+
+### Improved
+
+- **Main Flow Usability** — common tasks are now one command away instead of six flags away
+  - Added sensible defaults for checkpoint, config, output paths, and sample rate
+  - Keeps the original scripts untouched for power users and command-line gladiators
+
+- **Repository Root Cleanup** — moved utility tools from root into `scripts/`
+  - `audit_dataset.py` → `scripts/audit_dataset.py`
+  - `evaluate_tts_output.py` → `scripts/evaluate_tts_output.py`
+  - `view_spectrogram.py` → `scripts/view_spectrogram.py`
+  - `test_setup.py` → `scripts/test_setup.py`
+  - Updated references in workflow docs and wrappers to match new paths
+
+- **README Organization** — documented the new simplified flow prominently
+  - Added "Simplified Main Flow" section with concrete examples
+  - Updated version/footer references to v0.4.5
+  - Updated project structure description for `scripts/`
+
+### Internal
+
+- Reduced copy-paste risk in day-to-day workflow commands
+- Reduced chance of typo-driven spiritual damage
+
+---
+
+## [v0.4.4] - 2026-04-09
+
+### Added
+
+- **Real HiFi-GAN Inference Path** — The neural vocoder is now a real option, not a motivational poster
+  - `inference_vits.py` accepts `--vocoder_checkpoint` and `--vocoder_config`
+  - If both are provided, inference uses HiFi-GAN
+  - If omitted, it falls back to Griffin-Lim (for nostalgia and mild suffering)
+
+- **HiFi-GAN Checkpoint Compatibility** — Official `generator_v1` now loads without throwing a novel-length traceback
+  - Updated vocoder architecture to match official `resblocks.*.convs1/convs2` key layout
+  - Added support for resblock type selection from vocoder config
+  - Weight norm removal aligned with the updated module structure
+
+- **README Patch Notes & Navigation** — Documentation now easier to scan without scrolling through your entire lifespan
+  - Added quick navigation block
+  - Added explicit v0.4.4 patch notes in README
+  - Added clear HiFi-GAN usage examples and A/B comparison commands
+
+### Improved
+
+- **Buzz Detection Guidance** — Spectral flatness is now documented as a practical metric instead of mysterious academic decoration
+  - Added interpretation bands (speech-like vs mild noise vs buzzy/noisy)
+  - Included side-by-side Griffin-Lim vs HiFi-GAN example workflow
+
+- **Inference Output Consistency** — Audio duration reporting now respects active backend sample rate
+  - Prevents misleading duration printouts when vocoder sample rate differs from base config
+
+### Fixed
+
+- **State Dict Mismatch Crash** — `RuntimeError: Missing key(s)/Unexpected key(s)` when loading HiFi-GAN checkpoint
+  - Root cause: local wrapper used a simplified ResBlock layout incompatible with official checkpoint format
+  - Resolution: updated vocoder internals to official-compatible module naming and structure
+  - Result: checkpoint loads and synthesis completes successfully
+
+### Validation Snapshot
+
+- Generated `tts_output/gl_test.wav` (Griffin-Lim) and `tts_output/hifigan_test.wav` (HiFi-GAN)
+- Evaluation on same sentence showed lower ZCR and lower spectral flatness for HiFi-GAN
+- Translation: less metallic buzz, more speech-like waveform structure
+
+---
+
 ## [v0.4.3] - 2026-04-07
 
 ### Added

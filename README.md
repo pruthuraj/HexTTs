@@ -1,8 +1,49 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.4.3_
+_v0.4.6_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
+
+---
+
+## TL;DR (For Busy Humans)
+
+- Want speech now: run inference with HiFi-GAN.
+- Want less buzz: check `Spectral flatness` in `scripts/evaluate_tts_output.py`.
+- Want speed: use `vits_data_cached.py` and precompute features.
+- Want peace: keep backups of `checkpoints/best_model.pt` before experimenting.
+
+---
+
+## Quick Navigation (So You Don't Scroll Forever)
+
+- [Installation](#installation-the-suffering-begins)
+- [Simplified Main Flow](#simplified-main-flow-less-typing-more-talking)
+- [Data Prep](#data-prep-okay-but-why-is-your-dataset-like-this)
+- [Training](#training-lets-make-your-room-hot)
+- [Inference](#expected-console-output-during-inference)
+- [HiFi-GAN Flags](#optional-hifi-gan-vocoder-recommended)
+- [Buzz Metric](#buzz-metric-spectral-flatness)
+- [A/B Comparison](#quick-ab-griffin-lim-vs-hifi-gan)
+- [Continuation Test](#continuation-test-3-epoch-automation)
+- [Q&A](#qa-will-you-answer-my-questions)
+
+---
+
+## Patch Notes (v0.4.6)
+
+### What's New
+
+- **HiFi-GAN is now first-class in inference**: pass `--vocoder_checkpoint` + `--vocoder_config` and stop pretending Griffin-Lim is modern.
+- **Official checkpoint compatibility fixed**: the local vocoder wrapper now matches the official HiFi-GAN state dict layout.
+- **Better buzz diagnostics**: `Spectral flatness` is now a documented quality signal with practical thresholds.
+- **A/B workflow documented**: run the same sentence through Griffin-Lim and HiFi-GAN and compare like an adult scientist.
+- **Continuation test automation added**: `scripts/run_continuation_test.py` now runs resume-train + diagnostics + HiFi-GAN inference + evaluation in one go.
+
+### Real Talk Result
+
+In current tests, HiFi-GAN showed lower ZCR and lower spectral flatness than Griffin-Lim on the same sentence.
+Translation: less metallic mosquito energy, more speech-like output.
 
 ---
 
@@ -14,7 +55,7 @@ HexTTs is a **Text-to-Speech (TTS)** project that teaches an AI neural network t
 - **Powers**: The ability to type "hello world" and actually hear your computer SAY it
 - **Side effects**: Your GPU fans will sound like a jet engine, your electricity bill will cry, and you'll start explaining mel-spectrograms at parties.
 
-Let's pivot our eyeballs toward the _\diagram and \doc_ to synergize our confusion into a cohesive misunderstanding
+If confusion reaches critical mass, check the `diagram/` and `doc/` folders before declaring the project haunted.
 
 ---
 
@@ -29,7 +70,7 @@ HexTTs/
 ├── vits_model.py              ← The neural network brain (45 million parameters btw)
 ├── vits_data.py               ← Data loading (it's surprisingly boring)
 ├── vits_data_cached.py        ← Data loading, but make it fast (new and improved suffering)
-├── view_spectrogram.py        ← Visualize mel spectrograms (stare at pretty graphs)
+├── scripts/view_spectrogram.py← Visualize mel spectrograms (stare at pretty graphs)
 │
 ├── vits_config.yaml           ← "How angry should my GPU get?"
 ├── requirements.txt           ← All the suffering, listed as pip packages
@@ -38,7 +79,9 @@ HexTTs/
 ├── prepare_data.py            ← "Let me fix the phonemes because the dataset was messy"
 ├── validate_dataset.py        ← Quality control (spoiler: data is weird)
 ├── precompute_features.py     ← Computes mel spectrograms ahead of time so training doesn't die slowly
-├── test_setup.py              ← Sanity check that all your dependencies installed correctly
+├── scripts/test_setup.py      ← Sanity check that all your dependencies installed correctly
+├── scripts/audit_dataset.py   ← Dataset filtering and cleanup detective
+├── scripts/evaluate_tts_output.py ← Audio quality analyzer (batch + single file)
 │
 ├── checkpoints/               ← Model snapshots (save the good ones, delete the tragic ones)
 ├── logs/                      ← TensorBoard metrics (watch your loss go brrr)
@@ -48,7 +91,7 @@ HexTTs/
 ├── doc/                       ← Extra documentation you'll read later (spoiler: you won't)
 ├── notes/                     ← Patch notes, setup guides, lessons learned the hard way
 ├── deprecated/                ← Old code graveyard (abandon hope, all ye who enter here)
-├── scripts/                   ← Miscellaneous utility scripts (your personal junk drawer)
+├── scripts/                   ← Main-flow wrappers (less typing, fewer CLI faceplants)
 │
 └── data/
     ├── LJSpeech-1.1/          ← 13,100 voice samples (24GB of pure audio patience)
@@ -105,6 +148,70 @@ The Dependency Grimoire:
 - **numpy**: Exists in every single Python project ever. Probably powers your dreams too.
 - **matplotlib**: For beautiful loss curves that will make you weep. Especially the upward ones.
 - **tensorboard**: Real-time suffering visualization. Watch your metrics live. Find out about failures in real-time instead of later.
+
+---
+
+## Simplified Main Flow (Less Typing, More Talking)
+
+The old flow used long commands with lots of flags. That was technically correct and emotionally exhausting.
+
+Now use:
+
+```bash
+python scripts/main_flow.py <command> [options]
+```
+
+Main commands:
+
+- `train`: run training with default config
+- `infer`: synthesize one sentence (optional `--hifigan`)
+- `eval`: evaluate one file or a folder of wav files
+- `audit`: filter and score dataset metadata files
+- `compare`: run Griffin-Lim vs HiFi-GAN + evaluate both
+- `continuation-test`: run the 3-epoch continuation workflow with diagnostics and final HiFi-GAN report
+
+Examples:
+
+```bash
+# Train
+python scripts/main_flow.py train --device cuda
+
+# Inference (Griffin-Lim fallback)
+python scripts/main_flow.py infer --text "hello world" --output tts_output/hello_gl.wav
+
+# Inference (HiFi-GAN)
+python scripts/main_flow.py infer --text "hello world" --hifigan --output tts_output/hello_hifigan.wav
+
+# Evaluate one file
+python scripts/main_flow.py eval --audio tts_output/hello_hifigan.wav
+
+# Audit dataset without writing outputs
+python scripts/main_flow.py audit --dry-run
+
+# Full A/B comparison in one command
+python scripts/main_flow.py compare --text "we are at present concerned"
+
+# Full continuation test in one command
+python scripts/main_flow.py continuation-test --epochs 3
+```
+
+If you still enjoy manually typing 400-character commands, the original scripts are still available.
+
+### Continuation Test (3-Epoch Automation)
+
+If you want the full checkpoint continuation experiment without babysitting terminals:
+
+```bash
+venv\Scripts\python.exe scripts/run_continuation_test.py --epochs 3
+```
+
+This script will:
+
+- create an auto continuation config
+- resume from a checkpoint
+- extract latest duration diagnostics from TensorBoard
+- run HiFi-GAN inference on the fixed sentence
+- run objective evaluation (duration, ZCR, spectral flatness, verdict)
 
 ---
 
@@ -328,31 +435,31 @@ Did you actually swap `vits_data` to `vits_data_cached` in `train_vits.py`? Go l
 
 ## File Descriptions (TL;DR Edition)
 
-| File                     | What It Actually Does (Honest Edition)                                     | When You'll Actually Care                                   |
-| ------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `train_vits.py`          | 45M parameters of pure chaos learning to speak (with comments now!)        | Always. Forever. It haunts your nightmares                  |
-| `inference_vits.py`      | "Please convert my text to robot sounds" (it tries its best, bless it)     | After training (or when you give up)                        |
-| `tts_app.py`             | GUI wrapper for people afraid of command lines (aka cowards, endearing)    | When you're tired of suffering in Terminal                  |
-| `vits_model.py`          | The actual neural network brain (touch it and it breaks, don't ask how)    | Never. Ever. Seriously. Don't.                              |
-| `vits_data.py`           | Original data loader (slow enough to watch paint dry)                      | During training (the masochist path)                        |
-| `vits_data_cached.py`    | FAST data loader (seriously use this one instead of suffering)             | During training (the enlightened path)                      |
-| `vits_config.yaml`       | "How much suffering do I want today?" (knobs to destroy your GPU)          | Before training (read it carefully)                         |
-| `prepare_data.py`        | Converts Linda Johnson's words into phoneme soup (alphabet chaos)          | Once. Then pray it worked. Then run it again when it didn't |
-| `validate_dataset.py`    | "Is my data broken?" (spoiler: yes, but in acceptable ways)                | When paranoid. Which is always.                             |
-| `precompute_features.py` | Pre-bakes mel spectrograms so training doesn't die (PLEASE RUN THIS)       | Before training (seriously, do it)                          |
-| `view_spectrogram.py`    | Stare at pretty frequency heatmaps and pretend you understand them         | When debugging or procrastinating                           |
-| `evaluate_tts_output.py` | Audio quality analyzer (single file or batch mode, now SUUUPER flexible)   | After inference (to judge your creation)                    |
-| `test_setup.py`          | "Does CUDA actually exist or did I hallucinate it?" (verification script)  | On first setup (and sometimes at 3 AM)                      |
-| `requirements.txt`       | All your dependencies (a Pandora's box of suffering)                       | During `pip install` (prepare for pain)                     |
-| `CHANGELOG.md`           | A historical record of your poor decisions over time                       | When mysteriously everything breaks                         |
-| `checkpoints/`           | Nuclear launch codes, but for neural networks (200MB each, delete wisely)  | Always. Treat these like your children.                     |
-| `logs/`                  | TensorBoard metrics (watch your loss curve either ↓ or ↑ very ominously)   | During/after training (obsess over it)                      |
-| `tts_output/`            | Where your robot's voice lives (cherish it, it took $500 in electricity)   | After inference (go show your therapist)                    |
-| `diagram/`               | Pretty architecture diagrams (for impressing people who don't know better) | When explaining to non-AI people (futile)                   |
-| `doc/`                   | Extended documentation (the README you never read, but should)             | When README isn't enough (it will be)                       |
-| `notes/`                 | Patch notes, setup guides, lessons learned at 2 AM (your suffering diary)  | When troubleshooting (aka all the time)                     |
-| `deprecated/`            | Graveyard of old code (archaeology/horror museum combo)                    | Never. For. The. Love. Of. God. Never.                      |
-| `scripts/`               | Miscellaneous utility scripts (person who organized these: questionable)   | When you remember they exist (you won't)                    |
+| File                             | What It Actually Does (Honest Edition)                                     | When You'll Actually Care                                   |
+| -------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `train_vits.py`                  | 45M parameters of pure chaos learning to speak (with comments now!)        | Always. Forever. It haunts your nightmares                  |
+| `inference_vits.py`              | "Please convert my text to robot sounds" (it tries its best, bless it)     | After training (or when you give up)                        |
+| `tts_app.py`                     | GUI wrapper for people afraid of command lines (aka cowards, endearing)    | When you're tired of suffering in Terminal                  |
+| `vits_model.py`                  | The actual neural network brain (touch it and it breaks, don't ask how)    | Never. Ever. Seriously. Don't.                              |
+| `vits_data.py`                   | Original data loader (slow enough to watch paint dry)                      | During training (the masochist path)                        |
+| `vits_data_cached.py`            | FAST data loader (seriously use this one instead of suffering)             | During training (the enlightened path)                      |
+| `vits_config.yaml`               | "How much suffering do I want today?" (knobs to destroy your GPU)          | Before training (read it carefully)                         |
+| `prepare_data.py`                | Converts Linda Johnson's words into phoneme soup (alphabet chaos)          | Once. Then pray it worked. Then run it again when it didn't |
+| `validate_dataset.py`            | "Is my data broken?" (spoiler: yes, but in acceptable ways)                | When paranoid. Which is always.                             |
+| `precompute_features.py`         | Pre-bakes mel spectrograms so training doesn't die (PLEASE RUN THIS)       | Before training (seriously, do it)                          |
+| `scripts/view_spectrogram.py`    | Stare at pretty frequency heatmaps and pretend you understand them         | When debugging or procrastinating                           |
+| `scripts/evaluate_tts_output.py` | Audio quality analyzer (single file or batch mode, now SUUUPER flexible)   | After inference (to judge your creation)                    |
+| `scripts/test_setup.py`          | "Does CUDA actually exist or did I hallucinate it?" (verification script)  | On first setup (and sometimes at 3 AM)                      |
+| `requirements.txt`               | All your dependencies (a Pandora's box of suffering)                       | During `pip install` (prepare for pain)                     |
+| `CHANGELOG.md`                   | A historical record of your poor decisions over time                       | When mysteriously everything breaks                         |
+| `checkpoints/`                   | Nuclear launch codes, but for neural networks (200MB each, delete wisely)  | Always. Treat these like your children.                     |
+| `logs/`                          | TensorBoard metrics (watch your loss curve either ↓ or ↑ very ominously)   | During/after training (obsess over it)                      |
+| `tts_output/`                    | Where your robot's voice lives (cherish it, it took $500 in electricity)   | After inference (go show your therapist)                    |
+| `diagram/`                       | Pretty architecture diagrams (for impressing people who don't know better) | When explaining to non-AI people (futile)                   |
+| `doc/`                           | Extended documentation (the README you never read, but should)             | When README isn't enough (it will be)                       |
+| `notes/`                         | Patch notes, setup guides, lessons learned at 2 AM (your suffering diary)  | When troubleshooting (aka all the time)                     |
+| `deprecated/`                    | Graveyard of old code (archaeology/horror museum combo)                    | Never. For. The. Love. Of. God. Never.                      |
+| `scripts/`                       | Miscellaneous utility scripts (person who organized these: questionable)   | When you remember they exist (you won't)                    |
 
 ---
 
@@ -573,6 +680,86 @@ Audio duration: 2.34 seconds                 ← (Two seconds of robot voice is 
 
 **Important note:** Griffin-Lim vocoding is a 40-year-old algorithm and it SHOWS. Converting a 2-second mel-spectrogram can take 10–30 seconds because it iterates until convergence. This is not a bug, it's a _feature_ of using technology from when MTV was still playing music videos. Go upgrade to HiFi-GAN if you value your sanity.
 
+### Optional HiFi-GAN Vocoder (Recommended)
+
+`inference_vits.py` now supports an optional neural vocoder path.
+
+**New flags:**
+
+- `--vocoder_checkpoint`: path to HiFi-GAN generator checkpoint (for example `hifigan/generator_v1`)
+- `--vocoder_config`: path to HiFi-GAN config (`.json` or `.yaml`)
+
+If both flags are provided, inference uses HiFi-GAN.
+If omitted, inference falls back to Griffin-Lim.
+
+Example:
+
+```bash
+python inference_vits.py \
+  --checkpoint checkpoints/best_model.pt \
+  --config vits_config.yaml \
+  --vocoder_checkpoint hifigan/generator_v1 \
+  --vocoder_config hifigan/config_v1.json \
+  --text "we are at present concerned" \
+  --output tts_output/hifigan_test.wav \
+  --device cpu
+```
+
+---
+
+## Buzz Metric: Spectral Flatness
+
+`scripts/evaluate_tts_output.py` now reports `Spectral flatness` directly for each file.
+
+Interpretation guide:
+
+- `0.00–0.05`: tonal / speech-like
+- `0.05–0.20`: mild noise
+- `>0.20`: buzzy / noisy
+
+Example evaluation:
+
+```bash
+python scripts/evaluate_tts_output.py --audio tts_output/hifigan_test.wav --sample_rate 22050
+```
+
+---
+
+## Quick A/B: Griffin-Lim vs HiFi-GAN
+
+Use the same sentence for both paths:
+
+```bash
+# Griffin-Lim baseline
+python inference_vits.py \
+  --checkpoint checkpoints/best_model.pt \
+  --config vits_config.yaml \
+  --text "we are at present concerned" \
+  --output tts_output/gl_test.wav \
+  --device cpu
+
+# HiFi-GAN
+python inference_vits.py \
+  --checkpoint checkpoints/best_model.pt \
+  --config vits_config.yaml \
+  --vocoder_checkpoint hifigan/generator_v1 \
+  --vocoder_config hifigan/config_v1.json \
+  --text "we are at present concerned" \
+  --output tts_output/hifigan_test.wav \
+  --device cpu
+
+# Evaluate both
+python scripts/evaluate_tts_output.py --audio tts_output/gl_test.wav --sample_rate 22050
+python scripts/evaluate_tts_output.py --audio tts_output/hifigan_test.wav --sample_rate 22050
+```
+
+Recent sample run in this repo:
+
+- `gl_test.wav`: spectral flatness `0.0663`, ZCR `0.3588`
+- `hifigan_test.wav`: spectral flatness `0.0252`, ZCR `0.1294`
+
+Lower values here indicate less buzz and a more speech-like waveform for the HiFi-GAN path.
+
 ---
 
 ## How Does It Actually Work?
@@ -592,7 +779,7 @@ VITS takes phoneme sequences and predicts a mel-spectrogram — a 2D picture of 
 
 ### Step 3: Mel Spectrogram → Audio
 
-The vocoder converts the spectrogram picture back into actual audio waves. We use Griffin-Lim (classic, a bit robotic) because it requires no extra training. HiFi-GAN is the upgrade path if you want to feel fancy later.
+The vocoder converts the spectrogram picture back into actual audio waves. You can use Griffin-Lim (simple fallback, more robotic) or HiFi-GAN (neural vocoder, much cleaner output).
 
 ---
 
@@ -697,7 +884,7 @@ Explain what a mel spectrogram is at a dinner party
 
 ---
 
-_Last updated: April 7, 2026_ (v0.4.3 — PostNet refinement & enhanced diagnostics)  
+_Last updated: April 9, 2026_ (v0.4.6 — continuation test automation + docs update)  
 _GPU cooling status: CRITICAL_  
 _Electricity bill status: DO NOT OPEN_  
 _vits_data_cached.py status: Use it. Seriously._
