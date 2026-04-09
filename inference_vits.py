@@ -3,6 +3,8 @@ Inference Script for VITS TTS
 Generates speech from text using trained model
 """
 
+import pickle
+import warnings
 import torch
 import numpy as np
 import librosa
@@ -17,11 +19,11 @@ from vits_data import PHONEME_TO_ID
 
 class VITSInference:
     """Inference class for VITS model"""
-    
+
     def __init__(self, checkpoint_path: str, config: dict, device: torch.device):
         """
         Initialize inference
-        
+
         Args:
             checkpoint_path: path to trained model checkpoint
             config: configuration dict
@@ -29,39 +31,65 @@ class VITSInference:
         """
         self.device = device
         self.config = config
-        
+
         # Load model
         print(f"Loading model from {checkpoint_path}...")
-        config['vocab_size'] = VOCAB_SIZE
+        config["vocab_size"] = VOCAB_SIZE
         self.model = VITS(config).to(device)
         self.model.eval()
-        
-        # Load checkpoint
-        # checkpoint = torch.load(checkpoint_path, map_location=device)
-        # Use weights_only=False to load optimizer state if needed, but we only need model state dict here
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        
+
+        # Load checkpoint - prefer weights_only=True for security;
+        # fall back to weights_only=False only for legacy checkpoints
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        except (RuntimeError, pickle.PickleError):
+            warnings.warn(
+                "Could not load checkpoint with weights_only=True; "
+                "falling back to weights_only=False. "
+                "Ensure the checkpoint file is trusted.",
+                UserWarning,
+            )
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+        # Allow loading older checkpoints that do not contain PostNet weights
+        missing_keys, unexpected_keys = self.model.load_state_dict(
+            checkpoint["model_state_dict"],
+            strict=False
+        )
+
+        # Validate that any missing keys are only the expected PostNet keys
+        non_postnet_missing_keys = [k for k in missing_keys if not k.startswith("postnet.")]
+        if non_postnet_missing_keys:
+            warnings.warn(
+                f"Unexpected missing keys in checkpoint (non-PostNet): {non_postnet_missing_keys}",
+                UserWarning,
+            )
+        if unexpected_keys:
+            warnings.warn(
+                f"Unexpected keys found in checkpoint (not in model): {unexpected_keys}",
+                UserWarning,
+            )
+
         print("Model loaded successfully!")
-        
+
         # Audio parameters
-        self.sample_rate = config['sample_rate']
-        self.n_mel_channels = config['n_mel_channels']
-        self.mel_n_fft = config['mel_n_fft']
-        self.mel_hop_length = config['mel_hop_length']
-        self.mel_win_length = config['mel_win_length']
-        self.mel_f_min = config['mel_f_min']
-        self.mel_f_max = config['mel_f_max']
-        self.ref_level_db = config['ref_level_db']
-        self.min_level_db = config['min_level_db']
-    
+        self.sample_rate = config["sample_rate"]
+        self.n_mel_channels = config["n_mel_channels"]
+        self.mel_n_fft = config["mel_n_fft"]
+        self.mel_hop_length = config["mel_hop_length"]
+        self.mel_win_length = config["mel_win_length"]
+        self.mel_f_min = config["mel_f_min"]
+        self.mel_f_max = config["mel_f_max"]
+        self.ref_level_db = config["ref_level_db"]
+        self.min_level_db = config["min_level_db"]
+
     def text_to_phonemes(self, text: str) -> str:
         """
         Convert text to phoneme sequence using g2p_en
-        
+
         Args:
             text: input text
-        
+
         Returns:
             phoneme string (space-separated)
         """
@@ -69,105 +97,107 @@ class VITSInference:
             from g2p_en import G2p
             g2p = G2p()
             phoneme_list = g2p(text)
-            
+
             # Remove stress markers and filter
-            phonemes = [p.rstrip('012') for p in phoneme_list]
-            phonemes = [p for p in phonemes if p and p != ' ']
-            
-            return ' '.join(phonemes)
+            phonemes = [p.rstrip("012") for p in phoneme_list]
+            phonemes = [p for p in phonemes if p and p != " "]
+
+            return " ".join(phonemes)
         except Exception as e:
             print(f"Error converting text to phonemes: {e}")
             return text
-    
+
     def phonemes_to_ids(self, phoneme_str: str) -> torch.Tensor:
         """
         Convert phoneme string to ID tensor
-        
+
         Args:
             phoneme_str: space-separated phonemes
-        
+
         Returns:
             tensor of shape (1, seq_len)
         """
         phonemes = phoneme_str.split()
         ids = []
-        
+
         for p in phonemes:
             p = p.strip().upper()
             if p in PHONEME_TO_ID:
                 ids.append(PHONEME_TO_ID[p])
             else:
                 print(f"Warning: Unknown phoneme '{p}', skipping")
-        
+
         if not ids:
             # Return silence if no valid phonemes
-            ids = [PHONEME_TO_ID['PAD']]
-        
+            ids = [PHONEME_TO_ID["PAD"]]
+
         return torch.LongTensor(ids).unsqueeze(0).to(self.device)
-    
+
     @torch.no_grad()
-    def generate_mel_spectrogram(self, phoneme_ids: torch.Tensor, duration_scale: float = 1.0, noise_scale: float = 0.3) -> np.ndarray:
+    def generate_mel_spectrogram(
+        self,
+        phoneme_ids: torch.Tensor,
+        duration_scale: float = 1.0,
+        noise_scale: float = 0.3
+    ) -> np.ndarray:
         """
         Generate mel-spectrogram from phoneme IDs
-        
+
         Args:
             phoneme_ids: tensor of shape (1, seq_len)
             duration_scale: scale for predicted durations
             noise_scale: scale for latent noise
-        
+
         Returns:
             mel-spectrogram of shape (n_mel_channels, time_steps)
         """
-        
-        print("Entering model inference...")
-        # Ensure phoneme_ids is on the correct device and has the right shape
         if phoneme_ids.dim() != 2 or phoneme_ids.size(0) != 1:
             raise ValueError(f"Expected phoneme_ids of shape (1, seq_len), got {phoneme_ids.shape}")
-        print(f"Phoneme IDs shape: {phoneme_ids.shape}, device: {phoneme_ids.device}")
-        # Generate mel-spectrogram
-        lengths = torch.LongTensor([phoneme_ids.size(1)]).to(self.device)
-        mel_spec = self.model.inference(phoneme_ids, lengths=lengths, duration_scale=duration_scale, noise_scale=noise_scale)
-        print("Model inference completed.")
 
+        lengths = torch.LongTensor([phoneme_ids.size(1)]).to(self.device)
+
+        mel_spec = self.model.inference(
+            phoneme_ids,
+            lengths=lengths,
+            duration_scale=duration_scale,
+            noise_scale=noise_scale
+        )
 
         # Check for NaN or Inf values in the predicted mel spectrogram
         if torch.isnan(mel_spec).any() or torch.isinf(mel_spec).any():
             raise ValueError("predicted_mel contains NaN or Inf")
 
-        print(f"Raw predicted mel tensor shape: {mel_spec.shape}")
-
         # Remove batch dimension and move to CPU
         mel_spec = mel_spec.squeeze(0).cpu().numpy()
-        print(f"Mel after squeeze shape: {mel_spec.shape}")
-        # Convert from log scale to dB
+
+        # Convert from model output scale
         mel_spec = mel_spec * -self.ref_level_db + self.ref_level_db
 
         return mel_spec
-    
+
     def mel_spectrogram_to_audio(self, mel_spec: np.ndarray) -> np.ndarray:
         """
         Convert mel-spectrogram to audio using Griffin-Lim
-        
+
         Args:
             mel_spec: mel-spectrogram of shape (n_mel_channels, time_steps)
-        
+
         Returns:
             audio waveform
         """
         # Convert from dB to power
         mel_spec = np.power(10.0, mel_spec / 10.0)
-        
+
         # Invert mel spectrogram
         spectrogram = librosa.feature.inverse.mel_to_stft(
             mel_spec,
             sr=self.sample_rate,
             n_fft=self.mel_n_fft,
-            # Use the same fmin and fmax as during training for consistency
             fmin=self.mel_f_min,
             fmax=self.mel_f_max
         )
-        
-        # Griffin-Lim to convert spectrogram to waveform - adjust parameters for better quality
+
+        # Griffin-Lim to convert spectrogram to waveform
         audio = librosa.griffinlim(
             spectrogram,
             n_iter=128,
@@ -176,12 +206,12 @@ class VITSInference:
             momentum=0.99,
             init="random"
         )
-        
+
         # Normalize
         audio = audio / (np.abs(audio).max() + 1e-7)
-        
+
         return audio
-    
+
     def synthesize(
         self,
         text: str,
@@ -190,86 +220,71 @@ class VITSInference:
     ) -> Tuple[np.ndarray, int]:
         """
         Synthesize speech from text
-        
-        Args:   
+
+        Args:
             text: input text
             duration_scale: scale for predicted durations
             noise_scale: scale for latent noise
-        
+
         Returns:
             audio waveform, sample rate
         """
         print(f"Input text: {text}")
-        
+
         # Text → Phonemes
         phoneme_str = self.text_to_phonemes(text)
         print(f"Phonemes: {phoneme_str}")
-        
+
         # Phonemes → IDs
         phoneme_ids = self.phonemes_to_ids(phoneme_str)
         print(f"Phoneme IDs shape: {phoneme_ids.shape}")
-        
+
         # Mel-spectrogram generation
-        try:
-            mel_spec = self.generate_mel_spectrogram(
-                phoneme_ids,
-                duration_scale=duration_scale,
-                noise_scale=noise_scale
-            )
-            print(f"Mel-spectrogram shape: {mel_spec.shape}")
-        except Exception as e:
-            print(f"Error during mel generation: {e}")
-            raise
+        mel_spec = self.generate_mel_spectrogram(
+            phoneme_ids,
+            duration_scale=duration_scale,
+            noise_scale=noise_scale
+        )
+        print(f"Mel-spectrogram shape: {mel_spec.shape}")
 
         # Mel-spectrogram → Audio
-        try:
-            audio = self.mel_spectrogram_to_audio(mel_spec)
-            print(f"Audio shape: {audio.shape}, duration: {len(audio) / self.sample_rate:.2f}s")
-        except Exception as e:
-            print(f"Error during audio reconstruction: {e}")
-            raise
+        audio = self.mel_spectrogram_to_audio(mel_spec)
+        print(f"Audio shape: {audio.shape}, duration: {len(audio) / self.sample_rate:.2f}s")
 
         return audio, self.sample_rate
 
 
 def main():
-    parser = argparse.ArgumentParser(description='VITS TTS Inference')
-    parser.add_argument('--checkpoint', type=str, required=True,
-                       help='Path to model checkpoint')
-    parser.add_argument('--config', type=str, default='vits_config.yaml',
-                       help='Path to config file')
-    parser.add_argument('--duration_scale', type=float, default=1.0,
-                   help='Scale predicted durations (higher = slower speech)')
-    parser.add_argument('--noise_scale', type=float, default=0.3,
-                   help='Latent noise scale (lower = cleaner / less varied)')
-    parser.add_argument('--text', type=str, required=True,
-                       help='Text to synthesize')
-    parser.add_argument('--output', type=str, default='output.wav',
-                       help='Output audio file')
-    parser.add_argument('--device', type=str, default='cuda',
-                       help='Device (cuda or cpu)')
+    parser = argparse.ArgumentParser(description="VITS TTS Inference")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument("--config", type=str, default="vits_config.yaml", help="Path to config file")
+    parser.add_argument("--duration_scale", type=float, default=1.0, help="Scale predicted durations (higher = slower speech)")
+    parser.add_argument("--noise_scale", type=float, default=0.3, help="Latent noise scale (lower = cleaner / less varied)")
+    parser.add_argument("--text", type=str, required=True, help="Text to synthesize")
+    parser.add_argument("--output", type=str, default="output.wav", help="Output audio file")
+    parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
     args = parser.parse_args()
-    
+
     # Load config
-    with open(args.config, 'r') as f:
+    with open(args.config, "r") as f:
         config = yaml.safe_load(f)
-    
+
     # Set device
-    if args.device == 'cuda' and torch.cuda.is_available():
-        device = torch.device('cuda')
+    if args.device == "cuda" and torch.cuda.is_available():
+        device = torch.device("cuda")
     else:
-        device = torch.device('cpu')
-    
+        device = torch.device("cpu")
+
     # Initialize inference
     inference = VITSInference(args.checkpoint, config, device)
-    
+
     # Synthesize
     audio, sr = inference.synthesize(
         args.text,
         duration_scale=args.duration_scale,
         noise_scale=args.noise_scale,
     )
-    
+
     # Save audio
     sf.write(args.output, audio, sr)
     print(f"\nAudio saved to {args.output}")
