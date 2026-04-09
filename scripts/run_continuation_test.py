@@ -20,11 +20,12 @@ Example:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import yaml
 from tensorboard.backend.event_processing import event_accumulator
@@ -34,18 +35,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_cmd(cmd: list[str]) -> str:
-    """Run a command from repo root and return combined stdout/stderr."""
+    """Run a command from repo root and stream combined stdout/stderr."""
     print("\n$", " ".join(cmd))
-    result = subprocess.run(
+    child_env = os.environ.copy()
+    child_env["PYTHONUNBUFFERED"] = "1"
+
+    process = subprocess.Popen(
         cmd,
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        check=True,
+        env=child_env,
+        text=False,
+        bufsize=0,
     )
-    print(result.stdout)
-    return result.stdout
+
+    output_parts = bytearray()
+    assert process.stdout is not None
+
+    # Byte-level passthrough keeps carriage-return tqdm updates smooth.
+    while True:
+        chunk = process.stdout.read(1)
+        if not chunk:
+            break
+        output_parts.extend(chunk)
+        try:
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+        except Exception:
+            sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+            sys.stdout.flush()
+
+    output_text = output_parts.decode("utf-8", errors="replace")
+
+    return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd, output=output_text)
+
+    return output_text
 
 
 def build_config(args: argparse.Namespace) -> Path:
@@ -60,6 +87,7 @@ def build_config(args: argparse.Namespace) -> Path:
     cfg["checkpoint_dir"] = args.checkpoint_dir
     cfg["duration_token_alpha"] = args.alpha
     cfg["duration_sum_beta"] = args.beta
+    cfg["duration_debug_checks"] = bool(args.duration_debug_checks)
 
     with open(out_config_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
@@ -119,6 +147,94 @@ def parse_eval_metrics(eval_output: str) -> Dict[str, str]:
     return metrics
 
 
+def extract_training_snapshots(train_output: str) -> List[str]:
+    """Extract lines that contain tqdm loss/recon/kl/dur snapshots."""
+    snapshots: List[str] = []
+    for line in train_output.splitlines():
+        if "loss=" in line and "recon=" in line and "kl=" in line and "dur=" in line:
+            snapshots.append(line.strip())
+    return snapshots
+
+
+def build_summary_text(
+    mid_line: str,
+    val_line: str,
+    scalars: Dict[str, Tuple[int, float]],
+    eval_metrics: Dict[str, str],
+) -> str:
+    lines: List[str] = []
+    lines.append("=" * 70)
+    lines.append("CONTINUATION TEST SUMMARY")
+    lines.append("=" * 70)
+    lines.append(f"Mid-run line: {mid_line}")
+    lines.append(f"Validation line: {val_line}")
+    lines.append("")
+    lines.append("Latest duration diagnostics:")
+    for tag in [
+        "train/token_duration_mae",
+        "val/token_duration_mae",
+        "train/sum_error_mean",
+        "val/sum_error_mean",
+        "train/pred_speech_rate_proxy",
+        "val/pred_speech_rate_proxy",
+    ]:
+        if tag in scalars:
+            step, value = scalars[tag]
+            lines.append(f"- {tag}: step={step}, value={value:.10f}")
+        else:
+            lines.append(f"- {tag}: not found")
+
+    lines.append("")
+    lines.append("Final HiFi-GAN metrics:")
+    lines.append(f"- Duration: {eval_metrics.get('duration', 'n/a')}")
+    lines.append(f"- ZCR: {eval_metrics.get('zcr', 'n/a')}")
+    lines.append(f"- Spectral flatness: {eval_metrics.get('flatness', 'n/a')}")
+    lines.append(f"- Verdict: {eval_metrics.get('verdict', 'n/a')}")
+    return "\n".join(lines)
+
+
+def write_report(
+    report_path: Path,
+    train_output: str,
+    eval_output: str,
+    summary_text: str,
+) -> None:
+    """Write a plain-text continuation report with training/eval/summary sections."""
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    snapshots = extract_training_snapshots(train_output)
+
+    report_lines: List[str] = []
+    report_lines.append("HexTTs Continuation Test Report")
+    report_lines.append("=" * 70)
+    report_lines.append("")
+    report_lines.append("TRAINING SNAPSHOTS (loss, recon, kl, dur)")
+    report_lines.append("-" * 70)
+
+    if snapshots:
+        report_lines.append("First snapshot:")
+        report_lines.append(snapshots[0])
+        report_lines.append("")
+        report_lines.append("Last snapshot:")
+        report_lines.append(snapshots[-1])
+        report_lines.append("")
+        report_lines.append("Recent snapshots:")
+        for line in snapshots[-10:]:
+            report_lines.append(line)
+    else:
+        report_lines.append("No tqdm snapshots found in training output.")
+
+    report_lines.append("")
+    report_lines.append("HexTTS Output Evaluation Report")
+    report_lines.append("-" * 70)
+    report_lines.append(eval_output.strip())
+    report_lines.append("")
+    report_lines.append(summary_text)
+    report_lines.append("")
+
+    report_path.write_text("\n".join(report_lines), encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run continuation train+infer+eval test pipeline")
     parser.add_argument("--base-config", default="vits_config.yaml")
@@ -131,12 +247,14 @@ def main() -> None:
     parser.add_argument("--checkpoint-dir", default="./checkpoints_continue_auto")
     parser.add_argument("--alpha", type=float, default=1.0)
     parser.add_argument("--beta", type=float, default=0.2)
+    parser.add_argument("--duration-debug-checks", action="store_true")
 
     parser.add_argument("--text", default="we are at present concerned")
     parser.add_argument("--output", default="tts_output/hifigan_continue_auto.wav")
     parser.add_argument("--sample-rate", type=int, default=22050)
     parser.add_argument("--vocoder-checkpoint", default="hifigan/generator_v1")
     parser.add_argument("--vocoder-config", default="hifigan/config_v1.json")
+    parser.add_argument("--report-file", default="reports/continuation_test_report.txt")
 
     args = parser.parse_args()
 
@@ -219,26 +337,17 @@ def main() -> None:
 
     print(f"Mid-run line: {mid_line}")
     print(f"Validation line: {val_line}")
-    print("\nLatest duration diagnostics:")
-    for tag in [
-        "train/token_duration_mae",
-        "val/token_duration_mae",
-        "train/sum_error_mean",
-        "val/sum_error_mean",
-        "train/pred_speech_rate_proxy",
-        "val/pred_speech_rate_proxy",
-    ]:
-        if tag in scalars:
-            step, value = scalars[tag]
-            print(f"- {tag}: step={step}, value={value:.10f}")
-        else:
-            print(f"- {tag}: not found")
+    summary_text = build_summary_text(mid_line, val_line, scalars, eval_metrics)
+    print(summary_text)
 
-    print("\nFinal HiFi-GAN metrics:")
-    print(f"- Duration: {eval_metrics.get('duration', 'n/a')}")
-    print(f"- ZCR: {eval_metrics.get('zcr', 'n/a')}")
-    print(f"- Spectral flatness: {eval_metrics.get('flatness', 'n/a')}")
-    print(f"- Verdict: {eval_metrics.get('verdict', 'n/a')}")
+    report_path = ROOT / args.report_file
+    write_report(
+        report_path=report_path,
+        train_output=train_output,
+        eval_output=eval_output,
+        summary_text=summary_text,
+    )
+    print(f"\nReport saved to {report_path}")
 
 
 if __name__ == "__main__":

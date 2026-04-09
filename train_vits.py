@@ -232,6 +232,45 @@ class VITSTrainer:
             'sum_error_mean': sum_abs_error.mean().item(),
             'speech_rate_proxy_mean': speech_rate_proxy.mean().item(),
         }
+
+    def log_duration_debug(
+        self,
+        prefix: str,
+        batch: dict,
+        outputs: dict,
+        loss_dict: dict,
+    ) -> None:
+        """Print one duration sample for scale and proxy verification when debugging is enabled."""
+        if not self.config.get('duration_debug_checks', False):
+            return
+
+        try:
+            sample_idx = 0
+            phoneme_lengths = batch['phoneme_lengths']
+            mel_lengths = batch['mel_lengths']
+
+            predicted_duration = outputs['duration'].squeeze(-1).detach()
+            target_duration = self._build_pseudo_duration_targets(
+                phoneme_lengths=phoneme_lengths,
+                mel_lengths=mel_lengths,
+                max_seq_len=predicted_duration.size(1),
+                device=predicted_duration.device,
+            )
+
+            n_tokens = min(int(phoneme_lengths[sample_idx].item()), predicted_duration.size(1))
+            pred_vec = predicted_duration[sample_idx, :n_tokens].cpu().tolist()
+            target_vec = target_duration[sample_idx, :n_tokens].cpu().tolist()
+            pred_sum = float(sum(pred_vec))
+            target_sum = float(sum(target_vec))
+
+            print(f"[{prefix}] duration debug sample={sample_idx}")
+            print(f"[{prefix}] phoneme_length={int(phoneme_lengths[sample_idx].item())} mel_length={int(mel_lengths[sample_idx].item())}")
+            print(f"[{prefix}] target_duration={target_vec}")
+            print(f"[{prefix}] predicted_duration={pred_vec}")
+            print(f"[{prefix}] target_sum={target_sum:.4f} pred_sum={pred_sum:.4f}")
+            print(f"[{prefix}] proxy_formula=pred_sum / phoneme_length -> {loss_dict['speech_rate_proxy_mean']:.6f}")
+        except Exception as exc:
+            print(f"[{prefix}] duration debug failed: {exc}")
     
     def train_epoch(self) -> float:
         """Train for one epoch"""
@@ -264,6 +303,9 @@ class VITSTrainer:
                     # Compute loss with optional NaN protection
                     # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
                     loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
+
+                    if batch_idx == 0:
+                        self.log_duration_debug("train", batch, outputs, loss_dict)
                     
                     # NaN protection: skip batch if duration loss is excessively high (indicates instability)
                     # duration explosion skip” no longer works as intended 
@@ -396,6 +438,9 @@ class VITSTrainer:
 
             loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
             loss = loss_dict["total_loss"]
+
+            if len(loss_dict) > 0 and valid_batches == 0:
+                self.log_duration_debug("val", batch, outputs, loss_dict)
             
             # New v0.4.3: NaN protection for validation - skip batch if loss is NaN or Inf 
             if torch.isnan(loss) or torch.isinf(loss):

@@ -268,3 +268,84 @@ Verdict summary:
 Translation for tired humans:
 
 The continuation did not break the good stuff. Timing stayed in the useful range, buzz did not return, and the duration patch still looks like a real improvement instead of a one-off lucky punch.
+
+---
+
+## Hybrid Verification Run (Debug Checks Enabled, Post-Rollback)
+
+After rolling back the failed phoneme-aware experiment, we ran a short continuation pass with explicit duration debug checks enabled.
+
+Command used:
+
+```bash
+venv\Scripts\python.exe scripts/run_continuation_test.py --epochs 1 --duration-debug-checks --report-file reports/continuation_test_report_debug.txt
+```
+
+### Why This Matters
+
+This run was designed to verify that duration behavior is internally consistent again:
+
+- target vectors sum exactly to mel length
+- predicted vectors are on the same frame scale as targets
+- proxy formula remains in a realistic range
+- output duration matches the known healthy baseline
+
+### Debug Output Validation
+
+Train debug sample:
+
+- `phoneme_length=43`
+- `mel_length=329`
+- `target_sum=329.0000`
+- `pred_sum=359.3018`
+- proxy line: `8.323909`
+
+Validation debug sample:
+
+- `phoneme_length=91`
+- `mel_length=629`
+- `target_sum=629.0000`
+- `pred_sum=751.9414`
+- proxy line: `8.266350`
+
+Interpretation:
+
+- target allocation is sum-preserving and correct
+- prediction scale is in the same order as targets (frame-level values, not tiny fractions)
+- proxy values are back in plausible range (`~8.3`), not collapsed toward zero
+
+### Run Metrics
+
+| Metric                       | Step | Value         |
+| ---------------------------- | ---- | ------------- |
+| train/token_duration_mae     | 6000 | 1.1307485104  |
+| val/token_duration_mae       | 6060 | 1.2926565409  |
+| train/sum_error_mean         | 6000 | 60.0709152222 |
+| val/sum_error_mean           | 6060 | 140.899597168 |
+| train/pred_speech_rate_proxy | 6000 | 8.3540611267  |
+| val/pred_speech_rate_proxy   | 6060 | 8.2652015686  |
+
+### Audio Check
+
+From `tts_output/hifigan_continue_auto.wav`:
+
+- **Duration:** `1.8576 s`
+- **ZCR:** `0.114986`
+- **Spectral flatness:** `0.015726`
+
+Verdict: duration remains in the realistic range, waveform remains low-noise, and spectral structure remains speech-like.
+
+### Corrected Diagnosis
+
+The previous `0.23 s` collapse was from a bad patch/run state, not from the restored hybrid supervision path.
+
+Current system state is consistent and healthy:
+
+- duration learning is stable
+- proxy scale is correct
+- output length is realistic again
+- HiFi-GAN quality remains clean
+
+Supporting report file:
+
+- `reports/continuation_test_report_debug.txt`

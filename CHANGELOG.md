@@ -5,6 +5,52 @@ All notable GPU temperature increases are documented in your electricity bill.
 
 ---
 
+## [v0.4.7] - 2026-04-09
+
+### Added
+
+- **Duration Debug Verification Hooks** — `train_vits.py`
+  - Optional config flag: `duration_debug_checks`
+  - Prints one train/val sample with:
+    - `phoneme_length`
+    - `mel_length`
+    - `target_duration` vector and sum
+    - `predicted_duration` vector and sum
+    - proxy formula readout (`pred_sum / phoneme_length`)
+  - Purpose: verify scale consistency before trying new duration weighting ideas again
+
+- **Continuation Text Report Output** — `scripts/run_continuation_test.py`
+  - New CLI option: `--report-file` (default: `reports/continuation_test_report.txt`)
+  - Report now includes:
+    - training snapshots (`loss`, `recon`, `kl`, `dur`)
+    - full `HexTTS Output Evaluation Report`
+    - final `CONTINUATION TEST SUMMARY`
+
+### Improved
+
+- **Continuation Streaming UX** — progress output now streams in larger chunks
+  - Keeps `tqdm` progress display more readable in wrapper output
+  - Reduces repeated-line noise from carriage-return redraws
+
+### Fixed
+
+- **Duration Supervision Regression Recovery**
+  - Rolled back the failed phoneme-aware pseudo-duration experiment
+  - Restored previous working hybrid supervision path (uniform sum-preserving token targets + token/sum loss)
+  - Removed phoneme-weighted target path from active training logic
+
+### Validation Snapshot
+
+- Debug continuation command:
+  - `venv\Scripts\python.exe scripts/run_continuation_test.py --epochs 1 --duration-debug-checks --report-file reports/continuation_test_report_debug.txt`
+- Confirmed target sums matched mel lengths in debug samples
+- Confirmed proxy returned to healthy range (~8.26 to ~8.35)
+- Output duration recovered to realistic value (`1.8576 s`) with clean waveform metrics:
+  - `ZCR: 0.114986`
+  - `Spectral flatness: 0.015726`
+
+---
+
 ## [v0.4.6] - 2026-04-09
 
 ### Added

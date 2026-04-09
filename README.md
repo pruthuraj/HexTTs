@@ -1,6 +1,6 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.4.6_
+_v0.4.7_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 
@@ -30,7 +30,7 @@ _v0.4.6_
 
 ---
 
-## Patch Notes (v0.4.6)
+## Patch Notes (v0.4.7)
 
 ### What's New
 
@@ -39,11 +39,14 @@ _v0.4.6_
 - **Better buzz diagnostics**: `Spectral flatness` is now a documented quality signal with practical thresholds.
 - **A/B workflow documented**: run the same sentence through Griffin-Lim and HiFi-GAN and compare like an adult scientist.
 - **Continuation test automation added**: `scripts/run_continuation_test.py` now runs resume-train + diagnostics + HiFi-GAN inference + evaluation in one go.
+- **Hybrid duration path restored and verified**: rolled back the failed phoneme-aware branch and confirmed healthy duration behavior again.
+- **Duration debug checks added**: optional `duration_debug_checks` prints target/pred vectors and sums for one train/val sample.
+- **Continuation report export added**: `--report-file` writes training snapshots + full eval report + final summary to text.
 
 ### Real Talk Result
 
-In current tests, HiFi-GAN showed lower ZCR and lower spectral flatness than Griffin-Lim on the same sentence.
-Translation: less metallic mosquito energy, more speech-like output.
+In current tests, the restored hybrid duration path produced stable timing again (`~1.8576 s`) with clean waveform metrics (`ZCR ~0.115`, `flatness ~0.016`).
+Translation: less metallic mosquito energy, realistic timing, and no duration collapse drama.
 
 ---
 
@@ -882,9 +885,11 @@ Explain what a mel spectrogram is at a dinner party
 
 **Now go forth and make your GPU suffer for science.**
 
+## The total loss in HexTTS is not bounded between 0 and 1 because it is a weighted sum of reconstruction, KL, and duration losses. In particular, the duration term is based on frame-length differences, which can easily be much larger than 1. Therefore, the absolute loss value is less important than whether it decreases over time, whether validation remains stable, and whether generated audio improves.##
+
 ---
 
-_Last updated: April 9, 2026_ (v0.4.6 — continuation test automation + docs update)  
+_Last updated: April 9, 2026_ (v0.4.7 — hybrid rollback validated + debug/report tooling)  
 _GPU cooling status: CRITICAL_  
 _Electricity bill status: DO NOT OPEN_  
 _vits_data_cached.py status: Use it. Seriously._
