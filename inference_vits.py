@@ -42,7 +42,7 @@ class VITSInference:
         # fall back to weights_only=False only for legacy checkpoints
         try:
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except (RuntimeError, pickle.UnpicklingError):
+        except (RuntimeError, pickle.PickleError):
             warnings.warn(
                 "Could not load checkpoint with weights_only=True; "
                 "falling back to weights_only=False. "
