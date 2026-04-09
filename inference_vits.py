@@ -200,7 +200,7 @@ class VITSInference:
         # Griffin-Lim to convert spectrogram to waveform
         audio = librosa.griffinlim(
             spectrogram,
-            n_iter=128,
+            n_iter=256, # Increase iterations for better quality (default is 32)
             hop_length=self.mel_hop_length,
             win_length=self.mel_win_length,
             momentum=0.99,

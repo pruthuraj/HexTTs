@@ -203,10 +203,3 @@ max_duration_loss: 300
 # - GPU memory: Reduce batch_size or max_seq_length if OOM
 # - Training time: Increase learning_rate for faster convergence
 # - Quality: Increase num_epochs for better results
-
-# ============================================================
-# VOCODER
-# ============================================================
-# Leave blank to use Griffin-Lim fallback
-vocoder_checkpoint: "./hifigan/generator_v1"
-vocoder_config:     "./hifigan/config_v1.json"

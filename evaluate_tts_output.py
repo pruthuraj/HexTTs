@@ -13,6 +13,13 @@ def safe_float(x):
     """
     return float(np.asarray(x).item()) if np.asarray(x).size == 1 else float(np.mean(x))
 
+def spectral_flatness(audio, sr):
+
+    S = np.abs(librosa.stft(audio))
+
+    flatness = librosa.feature.spectral_flatness(S=S)
+
+    return float(np.mean(flatness))
 
 def compute_silence_ratio(audio: np.ndarray, threshold: float = 0.01) -> float:
     """
@@ -56,7 +63,7 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
         else 0.0
     )
     
-    spectral_flatness = (
+    spectral_flatness_val = (
         safe_float(
             librosa.feature.spectral_flatness(
                 y=audio.astype(np.float32),
@@ -113,14 +120,19 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
         verdicts.append("Possibly noisy/buzzy output.")
     else:
         verdicts.append("Waveform is not excessively noisy by ZCR.")
-
-    if spectral_flatness > 0.6:
+        
+    flat = spectral_flatness(audio, sr)
+    
+    if flat > 0.6:
         verdicts.append("Spectrum looks strongly noise-like.")
-    elif spectral_flatness > 0.4:
+    elif flat > 0.4:
         verdicts.append("Spectrum is somewhat noisy.")
     else:
         verdicts.append("Spectrum has more speech-like structure.")
 
+    
+
+    print(f"Spectral flatness : {flat:.5f}")
     # Structured report output.
     return {
         "file": str(audio_path),
@@ -131,7 +143,8 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
         "rms_energy": round(float(rms), 6),
         "silence_ratio": round(float(silence_ratio), 6),
         "zero_crossing_rate": round(float(zcr), 6),
-        "spectral_flatness": round(float(spectral_flatness), 6),
+        "spectral_flatness": round(float(spectral_flatness_val), 6),
+        "flat": round(float(flat), 5),
         "mel_frames": int(mel_frames),
         "mel_mean_db": round(float(mel_mean_db), 4),
         "mel_std_db": round(float(mel_std_db), 4),
@@ -153,6 +166,7 @@ def print_report(report: dict):
     print(f"Silence ratio      : {report['silence_ratio']:>6.6f}")
     print(f"Zero crossing rate : {report['zero_crossing_rate']:>6.6f}")
     print(f"Spectral flatness  : {report['spectral_flatness']:>6.6f}")
+    print(f"Spectral flatness : {report['flat']:.5f}")
     print(f"Mel frames         : {report['mel_frames']:>6d}")
     print(f"Mel mean dB        : {report['mel_mean_db']:>6.4f} dB")
     print(f"Mel std dB         : {report['mel_std_db']:>6.4f} dB")
