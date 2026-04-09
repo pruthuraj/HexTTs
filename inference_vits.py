@@ -5,6 +5,8 @@ Generates speech from text using trained model
 
 import pickle
 import warnings
+from pathlib import Path
+
 import torch
 import numpy as np
 import librosa
@@ -15,12 +17,20 @@ import yaml
 
 from vits_model import VITS, VOCAB_SIZE
 from vits_data import PHONEME_TO_ID
+from vocoder import HiFiGANVocoder
 
 
 class VITSInference:
     """Inference class for VITS model"""
 
-    def __init__(self, checkpoint_path: str, config: dict, device: torch.device):
+    def __init__(
+        self,
+        checkpoint_path: str,
+        config: dict,
+        device: torch.device,
+        vocoder_checkpoint: Optional[str] = None,
+        vocoder_config: Optional[str] = None,
+    ):
         """
         Initialize inference
 
@@ -31,6 +41,7 @@ class VITSInference:
         """
         self.device = device
         self.config = config
+        self.vocoder = None
 
         # Load model
         print(f"Loading model from {checkpoint_path}...")
@@ -71,6 +82,17 @@ class VITSInference:
             )
 
         print("Model loaded successfully!")
+
+        if vocoder_checkpoint or vocoder_config:
+            if not vocoder_checkpoint or not vocoder_config:
+                raise ValueError("Both --vocoder_checkpoint and --vocoder_config are required to enable HiFi-GAN")
+
+            if not Path(vocoder_checkpoint).exists():
+                raise FileNotFoundError(f"Vocoder checkpoint not found: {vocoder_checkpoint}")
+            if not Path(vocoder_config).exists():
+                raise FileNotFoundError(f"Vocoder config not found: {vocoder_config}")
+
+            self.vocoder = HiFiGANVocoder(vocoder_checkpoint, vocoder_config, device)
 
         # Audio parameters
         self.sample_rate = config["sample_rate"]
@@ -177,7 +199,7 @@ class VITSInference:
 
     def mel_spectrogram_to_audio(self, mel_spec: np.ndarray) -> np.ndarray:
         """
-        Convert mel-spectrogram to audio using Griffin-Lim
+        Convert mel-spectrogram to audio.
 
         Args:
             mel_spec: mel-spectrogram of shape (n_mel_channels, time_steps)
@@ -185,6 +207,10 @@ class VITSInference:
         Returns:
             audio waveform
         """
+        if self.vocoder is not None:
+            mel_for_vocoder = np.clip((self.ref_level_db - mel_spec) / self.ref_level_db, 0.0, 1.0)
+            return self.vocoder(mel_for_vocoder.astype(np.float32))
+
         # Convert from dB to power
         mel_spec = np.power(10.0, mel_spec / 10.0)
 
@@ -200,7 +226,7 @@ class VITSInference:
         # Griffin-Lim to convert spectrogram to waveform
         audio = librosa.griffinlim(
             spectrogram,
-            n_iter=128,
+            n_iter=256, # Increase iterations for better quality (default is 32)
             hop_length=self.mel_hop_length,
             win_length=self.mel_win_length,
             momentum=0.99,
@@ -249,15 +275,18 @@ class VITSInference:
 
         # Mel-spectrogram → Audio
         audio = self.mel_spectrogram_to_audio(mel_spec)
-        print(f"Audio shape: {audio.shape}, duration: {len(audio) / self.sample_rate:.2f}s")
+        output_sample_rate = self.vocoder.sample_rate if self.vocoder is not None else self.sample_rate
+        print(f"Audio shape: {audio.shape}, duration: {len(audio) / output_sample_rate:.2f}s")
 
-        return audio, self.sample_rate
+        return audio, output_sample_rate
 
 
 def main():
     parser = argparse.ArgumentParser(description="VITS TTS Inference")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--config", type=str, default="vits_config.yaml", help="Path to config file")
+    parser.add_argument("--vocoder_checkpoint", type=str, default=None, help="Optional HiFi-GAN generator checkpoint")
+    parser.add_argument("--vocoder_config", type=str, default=None, help="Optional HiFi-GAN config file")
     parser.add_argument("--duration_scale", type=float, default=1.0, help="Scale predicted durations (higher = slower speech)")
     parser.add_argument("--noise_scale", type=float, default=0.3, help="Latent noise scale (lower = cleaner / less varied)")
     parser.add_argument("--text", type=str, required=True, help="Text to synthesize")
@@ -276,7 +305,13 @@ def main():
         device = torch.device("cpu")
 
     # Initialize inference
-    inference = VITSInference(args.checkpoint, config, device)
+    inference = VITSInference(
+        args.checkpoint,
+        config,
+        device,
+        vocoder_checkpoint=args.vocoder_checkpoint,
+        vocoder_config=args.vocoder_config,
+    )
 
     # Synthesize
     audio, sr = inference.synthesize(
