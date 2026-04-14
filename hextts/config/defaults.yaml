@@ -1,0 +1,16 @@
+# HexTTs default package config
+# Keep this aligned with configs/base.yaml where possible.
+
+data_dir: ./data/ljspeech_prepared
+audio_dir: ./data/LJSpeech-1.1/wavs
+log_dir: ./logs
+checkpoint_dir: ./checkpoints
+sample_rate: 22050
+n_mel_channels: 80
+batch_size: 4
+learning_rate: 0.0001
+num_epochs: 100
+num_workers: 2
+scheduler_type: exponential
+scheduler_gamma: 0.999
+use_cached_features: false

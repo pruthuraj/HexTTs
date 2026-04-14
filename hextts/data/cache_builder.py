@@ -1,23 +1,15 @@
-"""
-Precompute mel spectrograms and phoneme ID arrays for faster VITS training.
+"""Cached feature precompute pipeline for HexTTs."""
 
-Usage:
-    python precompute_features.py --config vits_config.yaml
-
-Creates:
-    <data_dir>/cache/mels/<filename>.npy
-    <data_dir>/cache/ids/<filename>.npy
-"""
+from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-import yaml
-import numpy as np
 import librosa
-from tqdm import tqdm
+import numpy as np
 
-from vits_data import PHONEME_TO_ID
+from hextts.config import load_config
+from .raw_dataset import PHONEME_TO_ID
 
 
 def phonemes_to_ids(phoneme_str: str) -> np.ndarray:
@@ -63,6 +55,8 @@ def audio_to_mel(audio: np.ndarray, sample_rate: int, config: dict) -> np.ndarra
 
 
 def process_split(split_name: str, config: dict):
+    from tqdm import tqdm
+
     data_dir = Path(config["data_dir"])
     audio_dir = Path(config["audio_dir"])
     metadata_file = data_dir / f"{split_name}.txt"
@@ -116,20 +110,16 @@ def process_split(split_name: str, config: dict):
     print(f"{split_name}: cached {total} samples, skipped {skipped}")
 
 
-def main():
+def cli_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="vits_config.yaml")
-    args = parser.parse_args()
+    parser.add_argument("--config", type=str, default=None)
+    args = parser.parse_args(argv)
 
-    with open(args.config, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    config = load_config(args.config)
 
     process_split("train", config)
     process_split("val", config)
 
-    print("\nDone.")
+    print("\\nDone.")
     print(f"Cache created under: {Path(config['data_dir']) / 'cache'}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

@@ -8,13 +8,13 @@ same format so no other code needs to change.
 
 Usage
 -----
-    python scripts/audit_dataset.py --config vits_config.yaml
+        python scripts/audit_dataset.py --config configs/base.yaml
 
   # Dry-run: see report without writing filtered files
-    python scripts/audit_dataset.py --config vits_config.yaml --dry-run
+        python scripts/audit_dataset.py --config configs/base.yaml --dry-run
 
   # Adjust thresholds from the command line
-    python scripts/audit_dataset.py --config vits_config.yaml --min-duration 0.4 --max-duration 12.0
+        python scripts/audit_dataset.py --config configs/base.yaml --min-duration 0.4 --max-duration 12.0
 
 Output
 ------
@@ -313,20 +313,20 @@ def main():
         epilog="""
 Examples:
   # Standard run using config defaults
-    python scripts/audit_dataset.py --config vits_config.yaml
+        python scripts/audit_dataset.py --config configs/base.yaml
 
   # Dry-run: see what would be removed without writing files
-    python scripts/audit_dataset.py --config vits_config.yaml --dry-run
+        python scripts/audit_dataset.py --config configs/base.yaml --dry-run
 
   # Stricter duration filter
-    python scripts/audit_dataset.py --config vits_config.yaml --min-duration 0.8 --max-duration 8.0
+        python scripts/audit_dataset.py --config configs/base.yaml --min-duration 0.8 --max-duration 8.0
 
   # Allow more silence (useful for datasets with natural pauses)
-    python scripts/audit_dataset.py --config vits_config.yaml --max-silence 0.75
+    python scripts/audit_dataset.py --config configs/base.yaml --max-silence 0.75
         """,
     )
-    parser.add_argument("--config", default="vits_config.yaml",
-                        help="Path to vits_config.yaml")
+    parser.add_argument("--config", default="configs/base.yaml",
+                        help="Path to config YAML")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print report but do not write filtered files")
     parser.add_argument("--min-duration", type=float, default=None)
@@ -408,12 +408,12 @@ Examples:
 
     # ── Usage reminder ────────────────────────────────────────────────
     print("""
-To use the filtered dataset, update vits_config.yaml:
+To use the filtered dataset, update your config YAML (for example configs/base.yaml):
 
   data_dir: "./data/ljspeech_prepared"   # stays the same
 
-Then in train_vits.py (or vits_data.py), point to *_filtered.txt instead of
-*train.txt / val.txt.  The easiest way is to rename them once you are
+Then in scripts/train.py, point to *_filtered.txt instead of
+*train.txt / val.txt. The easiest way is to rename them once you are
 satisfied with the filter settings:
 
   copy data\\ljspeech_prepared\\train_filtered.txt  data\\ljspeech_prepared\\train.txt

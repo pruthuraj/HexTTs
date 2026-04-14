@@ -1,0 +1,131 @@
+# HexTTs Base Configuration
+# Canonical full config used for normal training/inference runs.
+
+# ============================================================
+# PATHS AND DATA
+# ============================================================
+
+data_dir: ./data/ljspeech_prepared # Directory containing prepared train.txt and val.txt metadata files.
+audio_dir: ./data/LJSpeech-1.1/wavs # Directory containing source .wav files referenced by metadata.
+log_dir: ./logs # TensorBoard/event logging output directory.
+checkpoint_dir: ./checkpoints # Directory used to save periodic and best model checkpoints.
+
+# ============================================================
+# AUDIO PROCESSING
+# ============================================================
+
+sample_rate: 22050 # Target audio sampling rate in Hz.
+n_mel_channels: 80 # Number of mel frequency bins in mel spectrograms.
+mel_n_fft: 1024 # FFT size used for STFT/mel extraction.
+mel_hop_length: 256 # STFT hop size (frame step) in samples.
+mel_win_length: 1024 # STFT window length in samples.
+mel_f_min: 0 # Minimum mel filterbank frequency in Hz.
+mel_f_max: 11025 # Maximum mel filterbank frequency in Hz (should be <= Nyquist).
+ref_level_db: 20 # Reference dB level used in mel normalization.
+min_level_db: -100 # Lower dB floor used in mel normalization.
+
+# ============================================================
+# MODEL ARCHITECTURE
+# ============================================================
+
+encoder_hidden_size: 384 # Hidden dimension for encoder transformer blocks.
+encoder_num_layers: 4 # Number of encoder transformer blocks.
+encoder_num_heads: 2 # Multi-head attention heads per encoder block.
+encoder_kernel_size: 3 # Convolution kernel size used in encoder submodules.
+encoder_dropout: 0.1 # Dropout rate applied in encoder layers.
+
+duration_predictor_filters: 256 # Channel width for duration predictor convolution stack.
+duration_predictor_kernel_sizes: [3, 3] # Kernel sizes for duration predictor conv layers.
+duration_predictor_dropout: 0.5 # Dropout rate used in duration predictor.
+
+decoder_hidden_size: 512 # Hidden dimension for decoder blocks.
+decoder_num_layers: 4 # Number of decoder transformer blocks.
+decoder_num_heads: 2 # Multi-head attention heads per decoder block.
+decoder_kernel_size: 3 # Convolution kernel size used in decoder submodules.
+decoder_dropout: 0.1 # Dropout rate applied in decoder layers.
+
+latent_dim: 192 # Latent variable dimension used by posterior/prior projection.
+posterior_flow_num_layers: 4 # Reserved flow-layer count for posterior modeling compatibility.
+
+# ============================================================
+# OPTIMIZER / SCHEDULER
+# ============================================================
+
+learning_rate: 0.0001 # Initial optimizer learning rate.
+adam_beta1: 0.9 # Adam first-moment decay.
+adam_beta2: 0.999 # Adam second-moment decay.
+adam_eps: 1.0e-09 # Adam epsilon for numerical stability.
+scheduler_type: exponential # LR scheduler type (project currently uses exponential).
+scheduler_step: 1000 # Step interval placeholder for schedulers that use step-based decay.
+scheduler_gamma: 0.999 # Multiplicative LR decay factor.
+
+# ============================================================
+# TRAINING CONTROL
+# ============================================================
+
+batch_size: 4 # Number of samples per training batch.
+num_epochs: 100 # Maximum training epochs.
+grad_clip_val: 0.6 # Gradient clipping norm threshold.
+num_workers: 2 # DataLoader worker process count.
+device: cuda # Preferred training device (cuda or cpu).
+
+# ============================================================
+# LOSS WEIGHTS
+# ============================================================
+
+loss_weight_reconstruction: 1.0 # Weight for mel reconstruction loss component.
+loss_weight_kl: 0.1 # Weight for KL divergence loss component.
+loss_weight_duration: 0.1 # Weight for duration prediction loss component.
+
+# Token-level and sum-level duration supervision balance.
+duration_token_alpha: 1.0 # Weight for token-level duration supervision term.
+duration_sum_beta: 0.2 # Weight for utterance-level duration sum supervision term.
+
+# ============================================================
+# VALIDATION / CHECKPOINTING
+# ============================================================
+
+validation_interval: 500 # Steps between validation passes.
+checkpoint_interval: 500 # Steps between checkpoint saves.
+max_checkpoints_keep: 5 # Maximum recent checkpoints to keep on disk.
+early_stopping_patience: 20 # Stop after this many non-improving validation epochs.
+
+# ============================================================
+# LOGGING / SAMPLES
+# ============================================================
+
+log_interval: 100 # Steps between console/TensorBoard scalar logging.
+sample_interval: 1000 # Steps between qualitative sample generation events.
+num_samples_to_generate: 3 # Number of validation samples to synthesize when sampling.
+
+# ============================================================
+# ADVANCED / STABILITY
+# ============================================================
+
+use_amp: false # Enable mixed precision training when true.
+warmup_steps: 0 # LR warmup steps (0 disables warmup).
+max_seq_length: 300 # Maximum mel frame length kept per training sample.
+seed: 42 # Random seed for reproducibility.
+
+# Guardrail used by trainer for unstable duration batches.
+max_duration_loss: 300 # Safety threshold for skipping unstable high-duration-loss batches.
+
+# Optional training debug printouts for duration internals.
+duration_debug_checks: false # Enable verbose duration debug prints in trainer.
+
+# ============================================================
+# INFERENCE
+# ============================================================
+
+temperature: 1.0 # Sampling temperature (reserved; mostly neutral at 1.0).
+inference_steps: 1 # Inference refinement steps (reserved for iterative decoders).
+
+# >1.0 slows speech down; tuned default for current checkpoint behavior.
+inference_duration_scale: 4.0 # Duration multiplier at inference (>1 slower speech, <1 faster).
+
+# ============================================================
+# DATA PIPELINE
+# ============================================================
+
+# Unified dataloader toggle: false=raw audio on the fly, true=precomputed cache.
+use_cached_features: false # true: load precomputed mel/id cache, false: compute features on the fly.

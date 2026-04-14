@@ -6,7 +6,7 @@ It shows the commands and the output you should expect when things are working.
 ## 1. Train
 
 ```bash
-venv\Scripts\python.exe train_vits.py --config vits_config.yaml --device cuda
+venv\Scripts\python.exe scripts\train.py --config configs/base.yaml --device cuda
 ```
 
 Expected output:
@@ -29,13 +29,13 @@ Healthy signs:
 Griffin-Lim fallback:
 
 ```bash
-venv\Scripts\python.exe inference_vits.py --checkpoint checkpoints/best_model.pt --config vits_config.yaml --text "we are at present concerned" --output tts_output/output.wav --device cpu
+venv\Scripts\python.exe scripts\infer.py --checkpoint checkpoints/best_model.pt --config configs/base.yaml --text "we are at present concerned" --output tts_output/output.wav --device cpu
 ```
 
 HiFi-GAN preferred:
 
 ```bash
-venv\Scripts\python.exe inference_vits.py --checkpoint checkpoints/best_model.pt --config vits_config.yaml --vocoder_checkpoint hifigan/generator_v1 --vocoder_config hifigan/config_v1.json --text "we are at present concerned" --output tts_output/output.wav --device cpu
+venv\Scripts\python.exe scripts\infer.py --checkpoint checkpoints/best_model.pt --config configs/base.yaml --vocoder_checkpoint hifigan/generator_v1 --vocoder_config hifigan/config_v1.json --text "we are at present concerned" --output tts_output/output.wav --device cpu
 ```
 
 Expected output:
@@ -142,17 +142,17 @@ What to watch:
 
 - [README.md](README.md)
 - [CHANGELOG.md](CHANGELOG.md)
-- [reports/evaluation_09.04.2026.md](reports/evaluation_09.04.2026.md)
+- [docs/reports/evaluation_09.04.2026.md](docs/reports/evaluation_09.04.2026.md)
 - [scripts/run_continuation_test.py](scripts/run_continuation_test.py)
-- [train_vits.py](train_vits.py)
+- [scripts/train.py](scripts/train.py)
 
 ## Short Version
 
 If you only want the important commands:
 
 ```bash
-venv\Scripts\python.exe train_vits.py --config vits_config.yaml --device cuda
-venv\Scripts\python.exe inference_vits.py --checkpoint checkpoints/best_model.pt --config vits_config.yaml --vocoder_checkpoint hifigan/generator_v1 --vocoder_config hifigan/config_v1.json --text "we are at present concerned" --output tts_output/output.wav --device cpu
+venv\Scripts\python.exe scripts\train.py --config configs/base.yaml --device cuda
+venv\Scripts\python.exe scripts\infer.py --checkpoint checkpoints/best_model.pt --config configs/base.yaml --vocoder_checkpoint hifigan/generator_v1 --vocoder_config hifigan/config_v1.json --text "we are at present concerned" --output tts_output/output.wav --device cpu
 venv\Scripts\python.exe scripts/evaluate_tts_output.py --audio tts_output/output.wav --sample_rate 22050
 venv\Scripts\python.exe scripts/run_continuation_test.py --epochs 1 --duration-debug-checks --report-file reports/continuation_test_report_debug.txt
 ```

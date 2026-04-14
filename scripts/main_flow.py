@@ -24,14 +24,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run_cmd(args: list[str]) -> None:
     """Run a command from repository root and stream output."""
+    # Keeping cwd fixed at repo root makes all relative paths predictable.
     print("\n$", " ".join(args))
     subprocess.run(args, cwd=ROOT, check=True)
 
 
 def cmd_train(args: argparse.Namespace) -> None:
+    """Launch training wrapper with normalized args from this control script."""
     cmd = [
         sys.executable,
-        "train_vits.py",
+        "scripts/train.py",
         "--config",
         args.config,
         "--device",
@@ -45,9 +47,10 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_infer(args: argparse.Namespace) -> None:
+    """Launch inference wrapper and optionally attach neural vocoder flags."""
     cmd = [
         sys.executable,
-        "inference_vits.py",
+        "scripts/infer.py",
         "--checkpoint",
         args.checkpoint,
         "--config",
@@ -72,6 +75,7 @@ def cmd_infer(args: argparse.Namespace) -> None:
 
 
 def cmd_eval(args: argparse.Namespace) -> None:
+    """Run objective wav evaluation on one file or a directory."""
     cmd = [
         sys.executable,
         "scripts/evaluate_tts_output.py",
@@ -84,6 +88,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
 
 def cmd_audit(args: argparse.Namespace) -> None:
+    """Run dataset audit script with optional threshold overrides."""
     cmd = [
         sys.executable,
         "scripts/audit_dataset.py",
@@ -108,10 +113,11 @@ def cmd_audit(args: argparse.Namespace) -> None:
 
 
 def cmd_compare(args: argparse.Namespace) -> None:
+    """Generate Griffin-Lim and HiFi-GAN outputs, then evaluate both."""
     gl_output = args.gl_output
     hifigan_output = args.hifigan_output
 
-    # Griffin-Lim baseline
+    # Griffin-Lim baseline: useful as a deterministic fallback reference.
     cmd_infer(
         argparse.Namespace(
             checkpoint=args.checkpoint,
@@ -127,7 +133,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
         )
     )
 
-    # HiFi-GAN path
+    # HiFi-GAN path: higher-fidelity neural vocoder output.
     cmd_infer(
         argparse.Namespace(
             checkpoint=args.checkpoint,
@@ -143,12 +149,13 @@ def cmd_compare(args: argparse.Namespace) -> None:
         )
     )
 
-    # Evaluate both outputs
+    # Evaluate both outputs for side-by-side objective metrics.
     cmd_eval(argparse.Namespace(audio=gl_output, sample_rate=args.sample_rate))
     cmd_eval(argparse.Namespace(audio=hifigan_output, sample_rate=args.sample_rate))
 
 
 def cmd_continuation_test(args: argparse.Namespace) -> None:
+    """Run the continuation automation script with explicit passthrough args."""
     cmd = [
         sys.executable,
         "scripts/run_continuation_test.py",
@@ -185,6 +192,7 @@ def cmd_continuation_test(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build top-level CLI parser with subcommands for common workflows."""
     parser = argparse.ArgumentParser(
         description="HexTTs simplified workflow runner",
     )
@@ -193,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # train
     p_train = subparsers.add_parser("train", help="Run model training")
-    p_train.add_argument("--config", default="vits_config.yaml")
+    p_train.add_argument("--config", default="configs/base.yaml")
     p_train.add_argument("--device", default="cuda")
     p_train.add_argument("--checkpoint", default=None)
     p_train.set_defaults(func=cmd_train)
@@ -201,7 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
     # infer
     p_infer = subparsers.add_parser("infer", help="Run text-to-speech inference")
     p_infer.add_argument("--checkpoint", default="checkpoints/best_model.pt")
-    p_infer.add_argument("--config", default="vits_config.yaml")
+    p_infer.add_argument("--config", default="configs/base.yaml")
     p_infer.add_argument("--text", required=True)
     p_infer.add_argument("--output", default="tts_output/output.wav")
     p_infer.add_argument("--device", default="cpu")
@@ -220,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # audit
     p_audit = subparsers.add_parser("audit", help="Audit and filter dataset metadata")
-    p_audit.add_argument("--config", default="vits_config.yaml")
+    p_audit.add_argument("--config", default="configs/base.yaml")
     p_audit.add_argument("--dry-run", action="store_true")
     p_audit.add_argument("--min-duration", type=float, default=None)
     p_audit.add_argument("--max-duration", type=float, default=None)
@@ -235,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate and evaluate Griffin-Lim vs HiFi-GAN on same text",
     )
     p_compare.add_argument("--checkpoint", default="checkpoints/best_model.pt")
-    p_compare.add_argument("--config", default="vits_config.yaml")
+    p_compare.add_argument("--config", default="configs/base.yaml")
     p_compare.add_argument("--text", required=True)
     p_compare.add_argument("--device", default="cpu")
     p_compare.add_argument("--duration_scale", type=float, default=1.0)
@@ -252,8 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
         "continuation-test",
         help="Run continuation train + diagnostics + HiFi-GAN evaluation",
     )
-    p_test.add_argument("--base-config", default="vits_config.yaml")
-    p_test.add_argument("--out-config", default="vits_config.continue_auto.yaml")
+    p_test.add_argument("--base-config", default="configs/base.yaml")
+    p_test.add_argument("--out-config", default="configs/continue_auto.yaml")
     p_test.add_argument("--resume-checkpoint", default="checkpoints_sanity/checkpoint_step_003000.pt")
     p_test.add_argument("--epochs", type=int, default=3)
     p_test.add_argument("--device", default="cuda")
