@@ -12,6 +12,7 @@ from .metrics import compute_silence_ratio, safe_float, spectral_flatness
 
 
 def collect_audio_files(input_path: Path) -> list[Path]:
+    """Resolve one input path into a validated list of wav files to evaluate."""
     if not input_path.exists():
         raise FileNotFoundError(f"Path not found: {input_path}")
 
@@ -27,11 +28,14 @@ def collect_audio_files(input_path: Path) -> list[Path]:
 
 
 def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
+    """Compute objective quality metrics and rule-based verdicts for one wav file."""
     audio, sr = sf.read(audio_path)
 
+    # Downmix to mono so all metrics are comparable across stereo/mono files.
     if audio.ndim > 1:
         audio = np.mean(audio, axis=1)
 
+    # Optional resample keeps cross-run comparisons on the same sample-rate basis.
     if sr_target is not None and sr != sr_target:
         audio = librosa.resample(audio.astype(np.float32), orig_sr=sr, target_sr=sr_target)
         sr = sr_target
@@ -69,6 +73,7 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
     mel_mean_db = safe_float(mel_db.mean())
     mel_std_db = safe_float(mel_db.std())
 
+    # Heuristic verdicts are intentionally simple and interpretable for quick triage.
     verdicts = []
 
     if duration_sec < 0.7:

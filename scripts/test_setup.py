@@ -6,6 +6,7 @@ Tests: PyTorch, CUDA, Audio libs, Phoneme conversion, Data loading
 import sys
 import os
 
+
 def test_pytorch():
     """Test PyTorch installation and CUDA availability"""
     print("\n" + "="*60)
@@ -65,7 +66,7 @@ def test_phoneme_conversion():
         
         g2p = G2p()
         
-        # Test conversions
+        # Small smoke set verifies end-to-end text->phoneme path.
         test_texts = [
             "Hello world",
             "The quick brown fox",
@@ -142,7 +143,7 @@ def test_data_loading(data_path):
         print(f"  Duration: {len(audio)/sr:.2f} seconds")
         print(f"  Shape: {audio.shape}")
         
-        # Compute mel spectrogram
+        # Compute one mel spectrogram to validate DSP stack works end-to-end.
         mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=80)
         print(f"✓ Computed mel spectrogram")
         print(f"  Shape: {mel_spec.shape}")
@@ -164,7 +165,7 @@ def test_metadata_files(data_path):
         
         if not os.path.exists(train_file):
             print(f"⚠ Training metadata not found: {train_file}")
-            print(f"  Run: python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared")
+            print(f"  Run: python scripts/prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared")
             return True
         
         # Count lines
@@ -188,6 +189,7 @@ def test_metadata_files(data_path):
         return False
 
 def main():
+    """Run all setup checks and print a concise pass/fail summary."""
     print("\n" + "="*60)
     print("VITS TTS SETUP VERIFICATION")
     print("="*60)
@@ -206,7 +208,7 @@ def main():
     results['Data Loading'] = test_data_loading(dataset_path)
     results['Prepared Metadata'] = test_metadata_files(prepared_path)
     
-    # Summary
+    # Summary section prints final setup readiness in one place.
     print("\n" + "="*60)
     print("SETUP SUMMARY")
     print("="*60)
@@ -230,7 +232,7 @@ def main():
         print("  1. CUDA not available: Update NVIDIA drivers & install CUDA Toolkit")
         print("  2. NumPy 2.x: Run: pip install 'numpy<2'")
         print("  3. Dataset not found: Download LJSpeech to ./data/LJSpeech-1.1")
-        print("  4. Metadata not prepared: Run: python prepare_data.py ...")
+        print("  4. Metadata not prepared: Run: python scripts/prepare_data.py ...")
     
     print("="*60 + "\n")
     

@@ -1,7 +1,10 @@
+"""Tests for backend routing logic in shared dataloader factory."""
+
 from hextts.data import dataloaders as dl
 
 
 def test_create_dataloaders_selects_raw_backend(monkeypatch):
+    """When caching is disabled, the raw dataset backend should be used."""
     called = {"ok": False}
 
     def fake_factory(config, batch_size, num_workers):
@@ -16,6 +19,7 @@ def test_create_dataloaders_selects_raw_backend(monkeypatch):
 
 
 def test_create_dataloaders_selects_cached_backend(monkeypatch):
+    """When caching is enabled, the cached feature backend should be used."""
     called = {"ok": False}
 
     def fake_factory(config, batch_size, num_workers):

@@ -1,14 +1,16 @@
-"""Wrapper that keeps old data preparation entrypoint available from scripts/."""
+"""Thin wrapper for package-based dataset preprocessing."""
 
-from __future__ import annotations
-
-import runpy
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "prepare_data.py"
+# Ensure package imports work when running this file directly.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from hextts.data.preprocessing import cli_main
+
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(ROOT))
-    runpy.run_path(str(TARGET), run_name="__main__")
+    # Delegate all CLI parsing/logic to package-owned implementation.
+    raise SystemExit(cli_main())

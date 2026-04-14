@@ -9,7 +9,7 @@ import librosa
 import numpy as np
 
 from hextts.config import load_config
-from vits_data import PHONEME_TO_ID
+from .raw_dataset import PHONEME_TO_ID
 
 
 def phonemes_to_ids(phoneme_str: str) -> np.ndarray:

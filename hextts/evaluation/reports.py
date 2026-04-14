@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def print_report(report: dict):
+    """Render a detailed single-file evaluation report to stdout."""
     print("\n" + "=" * 60)
     print(" HexTTS Output Evaluation Report ")
     print("=" * 60)
@@ -28,6 +29,7 @@ def print_report(report: dict):
 
 
 def print_batch_summary(all_reports: list[dict]):
+    """Render compact comparison table when multiple files were evaluated."""
     if len(all_reports) <= 1:
         return
 
@@ -35,6 +37,7 @@ def print_batch_summary(all_reports: list[dict]):
     print("BATCH EVALUATION SUMMARY")
     print("=" * 60)
     for i, report in enumerate(all_reports, 1):
+        # Keep summary one-line per file for quick side-by-side scanning.
         filename = Path(report["file"]).name
         duration = report["duration_sec"]
         rms = report["rms_energy"]

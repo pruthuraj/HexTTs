@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -172,24 +173,29 @@ def process_ljspeech_metadata(dataset_path, output_path, train_split=0.95, seed=
 
 
 def cli_main(argv: Optional[list[str]] = None) -> int:
-    import sys
+    parser = argparse.ArgumentParser(description="Prepare LJSpeech metadata for HexTTs")
+    parser.add_argument(
+        "dataset_path",
+        nargs="?",
+        default="./data/LJSpeech-1.1",
+        help="Path to the source LJSpeech dataset",
+    )
+    parser.add_argument(
+        "output_path",
+        nargs="?",
+        default="./data/ljspeech_prepared",
+        help="Directory where prepared metadata will be written",
+    )
 
-    argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv)
 
-    if len(argv) > 0:
-        dataset_path = argv[0]
-    else:
-        dataset_path = "./data/LJSpeech-1.1"
-
-    if len(argv) > 1:
-        output_path = argv[1]
-    else:
-        output_path = "./data/ljspeech_prepared"
+    dataset_path = args.dataset_path
+    output_path = args.output_path
 
     if not os.path.exists(dataset_path):
         print(f"Error: Dataset path not found: {dataset_path}")
-        print("Usage: python prepare_data.py <dataset_path> <output_path>")
-        print("Example: python prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared")
+        print("Usage: python scripts/prepare_data.py <dataset_path> <output_path>")
+        print("Example: python scripts/prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared")
         return 1
 
     success = process_ljspeech_metadata(dataset_path, output_path)

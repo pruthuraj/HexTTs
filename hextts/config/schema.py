@@ -19,6 +19,7 @@ REQUIRED_KEYS = {
 
 def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """Validate required config keys and basic invariants."""
+    # Fail fast on missing required fields so errors are explicit during startup.
     missing = [k for k in REQUIRED_KEYS if k not in config]
     if missing:
         raise ValueError(f"Missing required config keys: {missing}")
@@ -29,6 +30,7 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 f"Invalid type for '{key}'. Expected {expected_type}, got {type(config[key])}."
             )
 
+    # Core scalar sanity checks shared across train/infer paths.
     if config["sample_rate"] <= 0:
         raise ValueError("sample_rate must be > 0")
     if config["n_mel_channels"] <= 0:
@@ -50,11 +52,13 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     mel_hop_length = int(config.get("mel_hop_length", 1))
     mel_win_length = int(config.get("mel_win_length", 1))
 
+    # STFT window constraints: hop <= window <= fft.
     if mel_hop_length > mel_win_length:
         raise ValueError("mel_hop_length must be <= mel_win_length")
     if mel_win_length > mel_n_fft:
         raise ValueError("mel_win_length must be <= mel_n_fft")
 
+    # Mel upper frequency cannot exceed Nyquist limit.
     if "mel_f_max" in config and config["mel_f_max"] is not None:
         nyquist = float(config["sample_rate"]) / 2.0
         if float(config["mel_f_max"]) > nyquist:

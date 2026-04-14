@@ -412,8 +412,8 @@ To use the filtered dataset, update your config YAML (for example configs/base.y
 
   data_dir: "./data/ljspeech_prepared"   # stays the same
 
-Then in train_vits.py (or vits_data.py), point to *_filtered.txt instead of
-*train.txt / val.txt.  The easiest way is to rename them once you are
+Then in scripts/train.py, point to *_filtered.txt instead of
+*train.txt / val.txt. The easiest way is to rename them once you are
 satisfied with the filter settings:
 
   copy data\\ljspeech_prepared\\train_filtered.txt  data\\ljspeech_prepared\\train.txt

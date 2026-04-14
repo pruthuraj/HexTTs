@@ -1,9 +1,12 @@
+"""Shape-contract tests for training forward pass outputs."""
+
 import torch
 
 from hextts.models.vits import build_vits_model, get_vocab_size
 
 
 def _tiny_config():
+    """Return a compact architecture for quick shape validation."""
     return {
         "vocab_size": get_vocab_size(),
         "encoder_hidden_size": 64,
@@ -22,6 +25,7 @@ def _tiny_config():
 
 
 def test_model_forward_shapes():
+    """Forward pass should preserve expected batch/channel/sequence structure."""
     config = _tiny_config()
     model = build_vits_model(config)
     model.train()

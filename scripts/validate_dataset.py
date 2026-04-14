@@ -1,14 +1,17 @@
-"""Wrapper that keeps old validation entrypoint available from scripts/."""
+"""Thin wrapper for package-based dataset validation."""
 
 from __future__ import annotations
 
-import runpy
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "validate_dataset.py"
+# Ensure package imports work when running this file directly.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from hextts.data.validation import main
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(ROOT))
-    runpy.run_path(str(TARGET), run_name="__main__")
+    # Delegate execution to package-owned validator entrypoint.
+    raise SystemExit(main())

@@ -10,6 +10,7 @@ import torch
 
 
 def _safe_torch_load(path: str, map_location: torch.device, weights_only: bool) -> Dict[str, Any]:
+    """Load checkpoint with best-effort compatibility across torch versions."""
     try:
         return torch.load(path, map_location=map_location, weights_only=weights_only)
     except TypeError:
@@ -18,6 +19,7 @@ def _safe_torch_load(path: str, map_location: torch.device, weights_only: bool) 
 
 
 def build_checkpoint_metadata(config: Dict[str, Any], model_version: str) -> Dict[str, Any]:
+    """Build normalized metadata persisted with every checkpoint."""
     return {
         "model_version": model_version,
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -33,6 +35,7 @@ def build_checkpoint_metadata(config: Dict[str, Any], model_version: str) -> Dic
 
 def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], config: Dict[str, Any]) -> None:
     """Validate critical checkpoint metadata against runtime config."""
+    # These fields directly affect tensor shapes and audio contracts.
     expected = {
         "vocab_size": config.get("vocab_size"),
         "sample_rate": config.get("sample_rate"),
@@ -45,6 +48,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], config: Dict[s
             raise ValueError(f"Checkpoint mismatch for {key}: expected {exp}, got {got}")
 
     # Validate known architecture flags when present.
+    # This protects against silent runtime behavior drift after refactors.
     ckpt_flags = checkpoint.get("architecture_flags")
     if not isinstance(ckpt_flags, dict):
         return
@@ -74,6 +78,7 @@ def save_checkpoint(
     model_version: str = "v0.5.0",
     git_commit: str = "unknown",
 ) -> None:
+    """Persist model and runtime state as a resumable training checkpoint."""
     payload: Dict[str, Any] = {
         "model_state_dict": model.state_dict(),
         "epoch": int(epoch),
@@ -82,6 +87,7 @@ def save_checkpoint(
         "git_commit": git_commit,
     }
 
+    # Store reproducibility metadata alongside model weights.
     payload.update(build_checkpoint_metadata(config, model_version))
 
     if optimizer is not None:
@@ -98,11 +104,13 @@ def save_checkpoint(
 
 def load_checkpoint(path: str, device: torch.device, allow_legacy_pickle: bool = True) -> Dict[str, Any]:
     """Load checkpoint with safer default behavior."""
+    # Prefer weights-only loading first to reduce pickle surface area.
     try:
         ckpt = _safe_torch_load(path, map_location=device, weights_only=True)
     except Exception:
         if not allow_legacy_pickle:
             raise
+        # Fallback supports older checkpoints that contain optimizer/scheduler objects.
         ckpt = _safe_torch_load(path, map_location=device, weights_only=False)
 
     if not isinstance(ckpt, dict):

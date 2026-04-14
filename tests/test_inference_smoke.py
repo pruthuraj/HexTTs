@@ -1,9 +1,12 @@
+"""Minimal end-to-end inference smoke tests for model API stability."""
+
 import torch
 
 from hextts.models.vits import build_vits_model, get_vocab_size
 
 
 def _tiny_config():
+    """Return a tiny model config to keep tests fast on CPU."""
     return {
         "vocab_size": get_vocab_size(),
         "encoder_hidden_size": 64,
@@ -22,6 +25,7 @@ def _tiny_config():
 
 
 def test_inference_smoke_runs():
+    """Inference should produce a non-empty mel with expected tensor rank/layout."""
     config = _tiny_config()
     model = build_vits_model(config)
     model.eval()

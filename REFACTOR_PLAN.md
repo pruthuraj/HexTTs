@@ -6,6 +6,8 @@ Refactor HexTTs from a script-centered experimental TTS repo into a package-base
 
 ---
 
+## _Refactoring is done by copilot_
+
 ## Main Diagnosis
 
 HexTTs already has strong functional pieces:

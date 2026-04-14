@@ -3,6 +3,34 @@
 All notable changes to HexTTs are documented here.
 All notable GPU temperature increases are documented in your electricity bill.
 
+Migration note (v0.5.x): older entries may mention legacy files such as `train_vits.py`,
+`inference_vits.py`, and `vits_config.yaml`. Current active entrypoints/configs are
+`scripts/train.py`, `scripts/infer.py`, and `configs/base.yaml` (plus other profiles in `configs/`).
+
+---
+
+## [v0.5.0] - 2026-04-15
+
+### Summary
+
+- Continued package-first refactor cleanup with focus on docs/runtime alignment.
+- Kept active wrappers stable for existing workflows (`scripts/train.py`, `scripts/infer.py`).
+
+### Updated
+
+- Refined active markdown guidance to match current script-first command paths and config profiles.
+- Clarified architecture transition messaging for `hextts/` package layout usage.
+- Improved consistency between README quick notes and changelog release notes.
+
+### Compatibility
+
+- No breaking CLI path changes in this patch line.
+- Existing training/inference commands remain valid under the current wrapper flow.
+
+### Detailed Notes
+
+- For full refactor scope and phased breakdown, see `REFACTOR_PLAN.md`.
+
 ---
 
 ## [v0.4.7] - 2026-04-09

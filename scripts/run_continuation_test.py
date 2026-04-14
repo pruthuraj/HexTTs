@@ -1,4 +1,4 @@
-r"""
+"""
 run_continuation_test.py
 Automates the continuation test pipeline:
 1) Build a temporary continuation config
@@ -54,6 +54,7 @@ def run_cmd(cmd: list[str]) -> str:
     assert process.stdout is not None
 
     # Byte-level passthrough keeps carriage-return tqdm updates smooth.
+    # This avoids mangled progress bars when long training commands stream output.
     while True:
         chunk = process.stdout.read(1)
         if not chunk:
@@ -76,6 +77,7 @@ def run_cmd(cmd: list[str]) -> str:
 
 
 def build_config(args: argparse.Namespace) -> Path:
+    """Create continuation config derived from base config and runtime flags."""
     base_config_path = ROOT / args.base_config
     out_config_path = ROOT / args.out_config
 
@@ -87,6 +89,7 @@ def build_config(args: argparse.Namespace) -> Path:
     cfg["checkpoint_dir"] = args.checkpoint_dir
     cfg["duration_token_alpha"] = args.alpha
     cfg["duration_sum_beta"] = args.beta
+    # Toggle optional debug printing that dumps target/predicted duration vectors.
     cfg["duration_debug_checks"] = bool(args.duration_debug_checks)
 
     with open(out_config_path, "w", encoding="utf-8") as f:
@@ -96,6 +99,7 @@ def build_config(args: argparse.Namespace) -> Path:
 
 
 def latest_event_file(log_dir: Path) -> Path:
+    """Return most recently modified TensorBoard event file in a log directory."""
     event_files = sorted(log_dir.rglob("events.out.tfevents.*"), key=lambda p: p.stat().st_mtime)
     if not event_files:
         raise FileNotFoundError(f"No TensorBoard event files found under {log_dir}")
@@ -103,6 +107,7 @@ def latest_event_file(log_dir: Path) -> Path:
 
 
 def read_latest_scalars(log_dir: Path) -> Dict[str, Tuple[int, float]]:
+    """Read latest continuation diagnostics from TensorBoard scalar streams."""
     event_file = latest_event_file(log_dir)
     ea = event_accumulator.EventAccumulator(str(event_file))
     ea.Reload()
@@ -128,6 +133,7 @@ def read_latest_scalars(log_dir: Path) -> Dict[str, Tuple[int, float]]:
 
 
 def parse_eval_metrics(eval_output: str) -> Dict[str, str]:
+    """Extract key objective metrics from textual evaluation command output."""
     patterns = {
         "duration": r"Duration\s*:\s*([0-9.]+\s*s)",
         "zcr": r"Zero crossing rate\s*:\s*([0-9.]+)",
@@ -162,6 +168,7 @@ def build_summary_text(
     scalars: Dict[str, Tuple[int, float]],
     eval_metrics: Dict[str, str],
 ) -> str:
+    """Build compact continuation summary block for terminal and report output."""
     lines: List[str] = []
     lines.append("=" * 70)
     lines.append("CONTINUATION TEST SUMMARY")
@@ -236,6 +243,7 @@ def write_report(
 
 
 def main() -> None:
+    """Run continuation workflow: resume train -> infer -> evaluate -> report."""
     parser = argparse.ArgumentParser(description="Run continuation train+infer+eval test pipeline")
     parser.add_argument("--base-config", default="configs/base.yaml")
     parser.add_argument("--out-config", default="configs/continue_auto.yaml")
@@ -269,10 +277,10 @@ def main() -> None:
 
     out_cfg = build_config(args)
 
-    # 1) Resume training
+    # 1) Resume training from provided checkpoint/config.
     train_cmd = [
         sys.executable,
-        "train_vits.py",
+        "scripts/train.py",
         "--config",
         str(out_cfg.relative_to(ROOT)),
         "--checkpoint",
@@ -282,14 +290,14 @@ def main() -> None:
     ]
     train_output = run_cmd(train_cmd)
 
-    # 2) Read latest diagnostics
+    # 2) Read latest duration diagnostics from TensorBoard events.
     scalars = read_latest_scalars(ROOT / args.log_dir)
 
-    # 3) Run HiFi-GAN inference
+    # 3) Run HiFi-GAN inference on the fixed sentence.
     best_ckpt = Path(args.checkpoint_dir) / "best_model.pt"
     infer_cmd = [
         sys.executable,
-        "inference_vits.py",
+        "scripts/infer.py",
         "--checkpoint",
         str(best_ckpt).replace("\\", "/"),
         "--config",
@@ -307,7 +315,7 @@ def main() -> None:
     ]
     run_cmd(infer_cmd)
 
-    # 4) Evaluate generated audio
+    # 4) Evaluate generated audio with objective metrics.
     eval_cmd = [
         sys.executable,
         "scripts/evaluate_tts_output.py",
@@ -319,7 +327,7 @@ def main() -> None:
     eval_output = run_cmd(eval_cmd)
     eval_metrics = parse_eval_metrics(eval_output)
 
-    # 5) Print compact summary
+    # 5) Print compact summary and persist full text report.
     print("\n" + "=" * 70)
     print("CONTINUATION TEST SUMMARY")
     print("=" * 70)

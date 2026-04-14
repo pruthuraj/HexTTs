@@ -9,6 +9,7 @@ They are not part of the active package-first workflow.
 - Active continuation auto config: configs/continue_auto.yaml
 - Active data preprocessing entry: scripts/prepare_data.py (package-backed)
 - Active cached data pipeline: hextts/data/cache_builder.py
+- Active architecture doc: docs/architecture.md
 
 ## Deprecated Files
 
@@ -29,13 +30,31 @@ They are not part of the active package-first workflow.
   - Use only for historical comparison or rollback
 
 - prepare_data.py
-  - Historical copy kept in deprecated; active wrapper remains at project root and in scripts/
+  - Historical copy kept in deprecated; active entrypoint is scripts/prepare_data.py
+
+- precompute_features.py
+  - Active entrypoint is scripts/precompute_features.py
 
 - vits_data_cached.py
   - Legacy copy retained; active API is hextts/data/dataloaders.py
 
 - phoneme_duration_patch_record_2026-04-09.md
   - Historical patch notes
+
+- doc_history/architecture.md
+  - Archived architecture note previously stored under doc/
+
+- doc_history/TTS_Phase_1_Foundation.docx
+  - Archived phase document
+
+- doc_history/TTS_Phase_2_Setup_Dataset_Preparation.docx
+  - Archived phase document
+
+- doc_history/TTS_Phase_3_Training_the_VITS_Model.docx
+  - Archived phase document
+
+- doc_history/TTS_Goal_Document.docx
+  - Archived project goal document
 
 ## Notes
 

@@ -6,4 +6,6 @@ __all__ = [
     "models",
     "training",
     "inference",
+    "vocoder",
+    "utils",
 ]

@@ -1,3 +1,5 @@
+"""Small visualization script for inspecting waveform mel spectrograms."""
+
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,11 +9,14 @@ import soundfile as sf
 
 
 def wav_to_mel(audio_path, sample_rate=22050, n_mels=80, n_fft=1024, hop_length=256, win_length=1024):
+    """Load wav file and convert it to mel-dB spectrogram for visualization."""
     audio, sr = sf.read(audio_path)
     if len(audio.shape) > 1:
+        # Downmix stereo/multi-channel audio to mono for consistent mel view.
         audio = audio.mean(axis=1)
 
     if sr != sample_rate:
+        # Resample so mel axes are comparable across files.
         audio = librosa.resample(audio, orig_sr=sr, target_sr=sample_rate)
         sr = sample_rate
 
@@ -30,6 +35,7 @@ def wav_to_mel(audio_path, sample_rate=22050, n_mels=80, n_fft=1024, hop_length=
 
 
 def main():
+    """CLI entrypoint: render one waveform's mel spectrogram in a matplotlib window."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", type=str, required=True, help="Path to wav file")
     args = parser.parse_args()

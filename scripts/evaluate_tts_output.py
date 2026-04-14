@@ -1,3 +1,5 @@
+"""CLI utility for objective evaluation of generated audio files."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -15,6 +17,7 @@ from hextts.evaluation import (
 
 
 def main():
+    """CLI entrypoint for single-file or batch wav evaluation."""
     parser = argparse.ArgumentParser(description="Evaluate HexTTS generated wav file(s)")
     parser.add_argument(
         "--audio",
@@ -30,6 +33,7 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve one file or many files from an input directory.
     input_path = Path(args.audio)
     audio_files = collect_audio_files(input_path)
 
@@ -39,6 +43,7 @@ def main():
     all_reports = []
     for audio_path in audio_files:
         try:
+            # Evaluate each file independently so one failure does not kill the full batch.
             report = evaluate_audio(str(audio_path), sr_target=args.sample_rate)
             all_reports.append(report)
             print_report(report)

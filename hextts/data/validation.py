@@ -1,26 +1,17 @@
-"""
-Production-style dataset validator for HexTTs / VITS pipeline.
+"""Dataset validation helpers for HexTTs."""
 
-Validates:
-1. Raw LJSpeech dataset
-2. Prepared train.txt / val.txt
-3. Phoneme quality
-4. Train/val overlap leakage
-5. Cached mel and phoneme-id features
-6. Shape consistency between cached files and metadata
-"""
+from __future__ import annotations
 
-import os
+import argparse
 import csv
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 import librosa
 import numpy as np
 from tqdm import tqdm
 
 
-# Keep this aligned with your training vocabulary
 PHONEME_TO_ID = {
     'AA': 0, 'AE': 1, 'AH': 2, 'AO': 3, 'AW': 4, 'AY': 5, 'B': 6, 'CH': 7,
     'D': 8, 'DH': 9, 'EH': 10, 'ER': 11, 'EY': 12, 'F': 13, 'G': 14, 'HH': 15,
@@ -31,13 +22,15 @@ PHONEME_TO_ID = {
 }
 
 
-def print_header(title: str):
+def print_header(title: str) -> None:
+    """Print a consistent section header for CLI validator output."""
     print("\n" + "=" * 70)
     print(title)
     print("=" * 70)
 
 
 def validate_raw_dataset(dataset_path: str | Path, sample_limit: int = 200) -> dict:
+    """Validate raw LJSpeech assets and collect audio statistics/errors."""
     print_header("1. VALIDATING RAW LJSPEECH DATASET")
 
     dataset_path = Path(dataset_path)
@@ -64,12 +57,13 @@ def validate_raw_dataset(dataset_path: str | Path, sample_limit: int = 200) -> d
         results["ok"] = False
         return results
 
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        metadata = list(csv.reader(f, delimiter="|"))
+    with open(metadata_path, "r", encoding="utf-8") as handle:
+        metadata = list(csv.reader(handle, delimiter="|"))
 
     results["total_metadata_rows"] = len(metadata)
     print(f"✓ metadata.csv rows: {len(metadata)}")
 
+    # Sampling allows quick checks on large datasets while keeping full-scan option.
     rows_to_check = metadata[:sample_limit] if sample_limit else metadata
 
     for row in tqdm(rows_to_check, desc="Checking raw audio"):
@@ -90,8 +84,8 @@ def validate_raw_dataset(dataset_path: str | Path, sample_limit: int = 200) -> d
             results["sample_rates"][sr] += 1
             results["durations"].append(duration)
             results["checked_audio_files"] += 1
-        except Exception as e:
-            results["load_errors"].append(f"{filename}: {e}")
+        except Exception as exc:
+            results["load_errors"].append(f"{filename}: {exc}")
 
     print(f"✓ Checked audio files: {results['checked_audio_files']}")
     print(f"⚠ Missing audio files: {len(results['missing_audio'])}")
@@ -117,18 +111,19 @@ def validate_raw_dataset(dataset_path: str | Path, sample_limit: int = 200) -> d
 
 
 def read_prepared_file(path: Path):
+    """Parse prepared train/val files into (filename, phoneme_str) tuples."""
     entries = []
     malformed = []
 
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f, start=1):
+    with open(path, "r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
 
             parts = line.split("|", 1)
             if len(parts) != 2:
-                malformed.append((i, line))
+                malformed.append((line_number, line))
                 continue
 
             filename, phoneme_str = parts
@@ -138,6 +133,7 @@ def read_prepared_file(path: Path):
 
 
 def validate_prepared_dataset(prepared_path: str | Path) -> dict:
+    """Validate prepared phoneme splits and token vocabulary consistency."""
     print_header("2. VALIDATING PREPARED PHONEME DATASET")
 
     prepared_path = Path(prepared_path)
@@ -179,6 +175,7 @@ def validate_prepared_dataset(prepared_path: str | Path) -> dict:
     print(f"⚠ Train malformed rows: {len(train_malformed)}")
     print(f"⚠ Val malformed rows:   {len(val_malformed)}")
 
+    # Keep split label attached for actionable error reporting.
     all_entries = [("train", *x) for x in train_entries] + [("val", *x) for x in val_entries]
 
     for split, filename, phoneme_str in all_entries:
@@ -186,12 +183,12 @@ def validate_prepared_dataset(prepared_path: str | Path) -> dict:
             results["empty_phoneme_rows"].append((split, filename))
             continue
 
-        for p in phoneme_str.split():
-            p_norm = p.strip().upper().rstrip("012")
-            if not p_norm:
+        for phoneme in phoneme_str.split():
+            normalized = phoneme.strip().upper().rstrip("012")
+            if not normalized:
                 continue
-            if p_norm not in PHONEME_TO_ID:
-                results["unknown_phonemes"][p_norm] += 1
+            if normalized not in PHONEME_TO_ID:
+                results["unknown_phonemes"][normalized] += 1
 
     train_names = {x[0] for x in train_entries}
     val_names = {x[0] for x in val_entries}
@@ -227,6 +224,7 @@ def validate_prepared_dataset(prepared_path: str | Path) -> dict:
 
 
 def validate_cached_features(prepared_path: str | Path) -> dict:
+    """Validate cache presence, array shapes, and NaN/Inf safety."""
     print_header("3. VALIDATING CACHED FEATURES")
 
     prepared_path = Path(prepared_path)
@@ -268,6 +266,7 @@ def validate_cached_features(prepared_path: str | Path) -> dict:
     print(f"✓ Cached mel files: {len(mel_files)}")
     print(f"✓ Cached id files:  {len(ids_files)}")
 
+    # Expected cache keys are derived from both train and val manifests.
     expected_names = set()
     for file_path in [train_file, val_file]:
         if file_path.exists():
@@ -304,8 +303,8 @@ def validate_cached_features(prepared_path: str | Path) -> dict:
             if np.isnan(mel).any() or np.isinf(mel).any():
                 results["nan_mels"].append(filename)
 
-        except Exception as e:
-            results["bad_mel_shapes"].append((filename, str(e)))
+        except Exception as exc:
+            results["bad_mel_shapes"].append((filename, str(exc)))
 
     print(f"\n⚠ Missing mel files: {len(results['missing_mels'])}")
     print(f"⚠ Missing id files:  {len(results['missing_ids'])}")
@@ -330,7 +329,8 @@ def validate_cached_features(prepared_path: str | Path) -> dict:
     return results
 
 
-def print_summary(raw_results: dict, prepared_results: dict, cache_results: dict):
+def print_summary(raw_results: dict, prepared_results: dict, cache_results: dict) -> None:
+    """Print aggregated pass/fail summary and common remediation steps."""
     print_header("FINAL SUMMARY")
 
     checks = {
@@ -359,16 +359,20 @@ def print_summary(raw_results: dict, prepared_results: dict, cache_results: dict
     print("- Remove or fix malformed metadata rows")
 
 
-def main():
-    raw_path = "./data/LJSpeech-1.1"
-    prepared_path = "./data/ljspeech_prepared"
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint returning POSIX-style exit code."""
+    parser = argparse.ArgumentParser(description="Validate HexTTs datasets and caches")
+    parser.add_argument("--raw-path", default="./data/LJSpeech-1.1")
+    parser.add_argument("--prepared-path", default="./data/ljspeech_prepared")
+    parser.add_argument("--sample-limit", type=int, default=200)
+    args = parser.parse_args(argv)
 
-    raw_results = validate_raw_dataset(raw_path, sample_limit=200)
-    prepared_results = validate_prepared_dataset(prepared_path)
-    cache_results = validate_cached_features(prepared_path)
-
+    raw_results = validate_raw_dataset(args.raw_path, sample_limit=args.sample_limit)
+    prepared_results = validate_prepared_dataset(args.prepared_path)
+    cache_results = validate_cached_features(args.prepared_path)
     print_summary(raw_results, prepared_results, cache_results)
+    return 0 if raw_results["ok"] and prepared_results["ok"] and cache_results["ok"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

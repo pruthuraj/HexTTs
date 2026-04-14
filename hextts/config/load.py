@@ -15,6 +15,7 @@ LEGACY_CONFIG_PATH = Path("vits_config.yaml")
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
+    """Load a YAML file and enforce top-level mapping semantics."""
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
@@ -24,6 +25,7 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """Load and validate config, preferring package configs when available."""
+    # Selection order keeps modern package configs first while preserving legacy fallback.
     if config_path:
         path = Path(config_path)
     elif DEFAULT_CONFIG_PATH.exists():
@@ -36,5 +38,6 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         )
 
     config = _load_yaml(path)
+    # Preserve the resolved config source for debugging/reporting.
     config.setdefault("config_path", str(path))
     return validate_config(config)

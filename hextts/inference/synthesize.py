@@ -19,6 +19,7 @@ def synthesize_text(
     vocoder_checkpoint: Optional[str] = None,
     vocoder_config: Optional[str] = None,
 ) -> Tuple:
+    """Create a pipeline and synthesize one utterance with optional vocoder override."""
     pipeline = VITSInferencePipeline(
         checkpoint_path=checkpoint_path,
         config=config,

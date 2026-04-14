@@ -1,3 +1,5 @@
+"""Compatibility and roundtrip tests for checkpoint utilities."""
+
 import pytest
 import torch
 
@@ -9,12 +11,14 @@ from hextts.models.checkpointing import (
 
 
 def test_checkpoint_compatibility_happy_path():
+    """Matching config/checkpoint metadata should validate without errors."""
     config = {"vocab_size": 40, "sample_rate": 22050, "n_mel_channels": 80}
     checkpoint = {"vocab_size": 40, "sample_rate": 22050, "n_mels": 80}
     validate_checkpoint_compatibility(checkpoint, config)
 
 
 def test_checkpoint_compatibility_mismatch_raises():
+    """Critical metadata mismatches must raise to prevent unsafe resume."""
     config = {"vocab_size": 40, "sample_rate": 22050, "n_mel_channels": 80}
     checkpoint = {"vocab_size": 41, "sample_rate": 22050, "n_mels": 80}
     with pytest.raises(ValueError):
@@ -22,6 +26,7 @@ def test_checkpoint_compatibility_mismatch_raises():
 
 
 def test_checkpoint_architecture_flags_compatible():
+    """Architecture flags should pass validation when they match current config."""
     config = {
         "vocab_size": 40,
         "sample_rate": 22050,
@@ -42,6 +47,7 @@ def test_checkpoint_architecture_flags_compatible():
 
 
 def test_checkpoint_architecture_flags_mismatch_raises():
+    """Architecture-flag drift must be surfaced early via a ValueError."""
     config = {
         "vocab_size": 40,
         "sample_rate": 22050,
@@ -64,6 +70,7 @@ def test_checkpoint_architecture_flags_mismatch_raises():
 
 
 def test_checkpoint_roundtrip_save_load(tmp_path):
+    """A saved checkpoint should preserve core metadata and optimizer state."""
     config = {
         "vocab_size": 40,
         "sample_rate": 22050,
