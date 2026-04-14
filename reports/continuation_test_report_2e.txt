@@ -1,0 +1,68 @@
+HexTTs Continuation Test Report
+======================================================================
+
+TRAINING SNAPSHOTS (loss, recon, kl, dur)
+----------------------------------------------------------------------
+First snapshot:
+Epoch 1:   3%|3         | 99/3060 [00:37<09:51,  5.01it/s, loss=1.4238, recon=0.2188, kl=0.0390, dur=5.2420]
+
+Last snapshot:
+Epoch 2: 100%|##########| 3060/3060 [12:54<00:00,  3.95it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+
+Recent snapshots:
+Epoch 2: 100%|#########9| 3052/3060 [12:51<00:01,  4.48it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3053/3060 [12:51<00:01,  4.55it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3054/3060 [12:52<00:01,  3.92it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3055/3060 [12:52<00:01,  3.65it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3056/3060 [12:52<00:01,  3.30it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3057/3060 [12:53<00:00,  3.24it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3058/3060 [12:53<00:00,  3.31it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|#########9| 3059/3060 [12:53<00:00,  3.65it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|##########| 3060/3060 [12:53<00:00,  4.14it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+Epoch 2: 100%|##########| 3060/3060 [12:54<00:00,  3.95it/s, loss=1.2629, recon=0.1551, kl=0.0087, dur=12.9701]
+
+HexTTS Output Evaluation Report
+----------------------------------------------------------------------
+============================================================
+ HexTTS Output Evaluation Report 
+============================================================
+File               : tts_output\hifigan_continue_auto.wav
+Sample rate        : 22050 Hz
+Samples            : 40,704
+Duration           : 1.8460 s
+Peak amplitude     : 1.000000
+RMS energy         : 0.905918
+Silence ratio      : 0.000246
+Zero crossing rate : 0.115704
+Spectral flatness  : 0.006354
+Mel frames         :    160
+Mel mean dB        : -28.6127 dB
+Mel std dB         : 7.6291 dB
+
+ Verdict:
+  � Duration is in a more realistic range.
+  � Silence level looks acceptable.
+  � Energy level looks reasonable.
+  � Waveform is not excessively noisy by ZCR.
+  � Spectrum has more speech-like structure.
+------------------------------------------------------------
+
+======================================================================
+CONTINUATION TEST SUMMARY
+======================================================================
+Mid-run line: Epoch 1:   3%|3         | 99/3060 [00:37<09:51,  5.01it/s, loss=1.4238, recon=0.2188, kl=0.0390, dur=5.2420]
+Validation line: Epoch 2/2 - Validation loss: 1.7117
+
+Latest duration diagnostics:
+- train/token_duration_mae: step=9100, value=1.3920038939
+- val/token_duration_mae: step=9120, value=1.2148599625
+- train/sum_error_mean: step=9100, value=60.0626678467
+- val/sum_error_mean: step=9120, value=132.4197692871
+- train/pred_speech_rate_proxy: step=9100, value=8.0611181259
+- val/pred_speech_rate_proxy: step=9120, value=8.1874761581
+
+Final HiFi-GAN metrics:
+- Duration: 1.8460 s
+- ZCR: 0.115704
+- Spectral flatness: 0.006354
+- Verdict: n/a

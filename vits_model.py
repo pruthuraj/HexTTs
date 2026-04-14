@@ -193,7 +193,7 @@ class DurationPredictor(nn.Module):
         duration = self.linear(x)  # (batch_size, seq_len, 1)
         # duration = torch.clamp(F.softplus(duration), min=1.0)  # Ensure positive
         # clamp duration to prevent extreme values that can cause memory issues during length regulation
-        duration = torch.clamp(F.softplus(duration), min=1.0, max=20.0) 
+        duration = torch.clamp(F.softplus(duration), min=1.0, max=30.0) 
         return duration
 
 

@@ -119,6 +119,9 @@ loss_weight_kl: 0.1
 #loss_weight_duration: 0.5 # Reduce duration loss weight to prevent instability during early training
 loss_weight_duration: 0.1  # A moderate duration loss weight can help improve duration prediction while maintaining training stability
 # loss_weight_duration: 0.05 # Further reduce duration loss weight to prevent NaN explosion during early training, especially with smaller batch sizes
+
+# Weight for lightweight multi-resolution STFT consistency term
+loss_weight_stft: 0.1
                  
 # ============================================================
 # VALIDATION AND CHECKPOINTING
@@ -188,6 +191,16 @@ inference_steps: 1
 
 # Maximum allowed duration loss to prevent training instability (NaN explosion)
 max_duration_loss: 300
+
+# Maximum allowed predicted duration value (frames per token) for safety checks
+max_duration_value: 20.0
+
+# Hybrid duration supervision weights
+duration_token_alpha: 1.0
+duration_sum_beta: 0.1
+
+# Print one train/val duration debug sample when enabled
+duration_debug_checks: false
 
 # ============================================================
 # DESCRIPTION

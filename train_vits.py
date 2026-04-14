@@ -9,6 +9,7 @@ Fixes:
 """
 
 import os
+from typeguard import config
 import yaml
 import torch
 import torch.nn as nn
@@ -22,7 +23,16 @@ import argparse
 from vits_model import VITS,VOCAB_SIZE
 # from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
 # Patched to use cached dataloader with warning tracking
-from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
+from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary, PHONEME_TO_ID
+
+VOWEL_PHONEMES = {
+    "AA", "AE", "AH", "AO", "AW", "AY",
+    "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW"
+}
+
+PAUSE_PHONEMES = {
+    "PAD", "SP", "SIL", "PAUSE"
+}
 
 # Sample texts for validation generation (can be customized)
 SAMPLE_TEXTS = [
@@ -96,6 +106,7 @@ class VITSTrainer:
 
     @staticmethod
     def _build_pseudo_duration_targets(
+        phoneme_ids: torch.Tensor,
         phoneme_lengths: torch.Tensor,
         mel_lengths: torch.Tensor,
         max_seq_len: int,
@@ -114,24 +125,119 @@ class VITSTrainer:
         batch_size = phoneme_lengths.size(0)
         targets = torch.zeros(batch_size, max_seq_len, dtype=torch.long, device=device)
 
-        for i in range(batch_size):
-            n_tokens = max(1, int(phoneme_lengths[i].item()))
-            n_tokens = min(n_tokens, max_seq_len)
-            total_frames = max(0, int(mel_lengths[i].item()))
+        id_to_phoneme = {v: k for k, v in PHONEME_TO_ID.items()}
 
-            base = total_frames // n_tokens
-            remainder = total_frames % n_tokens
+        for b in range(batch_size):
+            n = max(1, int(phoneme_lengths[b].item()))
+            n = min(n, max_seq_len)
+            total_frames = max(0, int(mel_lengths[b].item()))
 
-            targets[i, :n_tokens] = base
+            weights = []
+            for j in range(n):
+                pid = int(phoneme_ids[b, j].item())
+                phoneme = id_to_phoneme.get(pid, "")
+
+                if phoneme in PAUSE_PHONEMES:
+                    w = 3.0
+                elif phoneme in VOWEL_PHONEMES:
+                    w = 1.5
+                else:
+                    w = 1.0
+
+                weights.append(w)
+
+            if len(weights) > 0:
+                weights[-1] *= 1.5
+
+            weights = torch.tensor(weights, device=device, dtype=torch.float32)
+            weights = weights / weights.sum().clamp_min(1e-6)
+
+            raw = weights * total_frames
+            base = torch.floor(raw)
+            remainder = total_frames - int(base.sum().item())
+
             if remainder > 0:
-                targets[i, :remainder] += 1
+                frac = raw - base
+                topk = torch.topk(frac, k=remainder).indices
+                base[topk] += 1
+
+            # Allocate an explicit utterance-final pause budget while preserving total sum.
+            pause_frames = int(0.05 * total_frames)
+            if n > 1 and pause_frames > 0:
+                remaining = pause_frames
+                donor = base[:n - 1]
+                while remaining > 0:
+                    candidates = torch.where(donor > 1)[0]
+                    if candidates.numel() == 0:
+                        break
+                    idx = candidates[torch.argmax(donor[candidates])]
+                    donor[idx] -= 1
+                    remaining -= 1
+                base[n - 1] += (pause_frames - remaining)
+
+            targets[b, :n] = base
 
         return targets
+
+    @staticmethod
+    def multi_resolution_stft_loss(
+        pred_mel: torch.Tensor,
+        target_mel: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Lightweight spectral consistency loss on mel tensors.
+
+        Works directly on predicted/target mel-spectrograms by comparing
+        multi-scale temporal STFT magnitudes over mel channels.
+
+        Args:
+            pred_mel:   (B, n_mels, T)
+            target_mel: (B, n_mels, T)
+
+        Returns:
+            scalar loss
+        """
+        resolutions = [
+            (32, 16, 32),
+            (64, 32, 64),
+            (128, 64, 128),
+        ]
+
+        total = torch.tensor(0.0, device=pred_mel.device)
+        count = 0
+
+        # Treat each mel channel sequence as a 1D signal over time
+        b, c, t = pred_mel.shape
+        pred_flat = pred_mel.reshape(b * c, t)
+        target_flat = target_mel.reshape(b * c, t)
+
+        for n_fft, hop, win in resolutions:
+            pred_spec = torch.stft(
+                pred_flat,
+                n_fft=n_fft,
+                hop_length=hop,
+                win_length=win,
+                return_complex=True,
+            ).abs()
+
+            target_spec = torch.stft(
+                target_flat,
+                n_fft=n_fft,
+                hop_length=hop,
+                win_length=win,
+                return_complex=True,
+            ).abs()
+
+            total = total + torch.mean(torch.abs(pred_spec - target_spec))
+            count += 1
+
+        return total / max(count, 1)
     
     def compute_loss(
         self,
         outputs: dict,
         mel_spec: torch.Tensor,
+        phoneme_ids: torch.Tensor,
         phoneme_lengths: torch.Tensor,
         mel_lengths: torch.Tensor,
         config: dict,
@@ -169,6 +275,7 @@ class VITSTrainer:
         
         # 1. Reconstruction loss (L1 or MSE)
         recon_loss = nn.functional.l1_loss(predicted_mel, mel_spec, reduction='mean')
+        stft_loss = self.multi_resolution_stft_loss(predicted_mel, mel_spec)
         
         # 2. KL divergence loss (for VAE component)
         if mu is not None and logvar is not None:
@@ -181,6 +288,7 @@ class VITSTrainer:
         max_seq_len = pred.size(1)
 
         target = self._build_pseudo_duration_targets(
+            phoneme_ids=phoneme_ids,
             phoneme_lengths=phoneme_lengths,
             mel_lengths=mel_lengths,
             max_seq_len=max_seq_len,
@@ -204,7 +312,7 @@ class VITSTrainer:
         sum_loss = nn.functional.l1_loss(pred_duration_sum, target_duration_sum, reduction='mean')
 
         alpha = float(config.get('duration_token_alpha', 1.0))
-        beta = float(config.get('duration_sum_beta', 0.2))
+        beta = float(config.get('duration_sum_beta', 0.1))
         duration_loss = alpha * token_loss + beta * sum_loss
 
         token_mae = (torch.abs(pred - target.float()) * token_mask_f).sum() / token_mask_f.sum().clamp_min(1.0)
@@ -213,10 +321,13 @@ class VITSTrainer:
         
         
         # Weighted sum
+        stft_weight = float(config.get('loss_weight_stft', 0.1))
+
         total_loss = (
             config['loss_weight_reconstruction'] * recon_loss +
             config['loss_weight_kl'] * kl_loss +
-            config['loss_weight_duration'] * duration_loss
+            config['loss_weight_duration'] * duration_loss +
+            stft_weight * stft_loss
         )
         
         return {
@@ -224,6 +335,7 @@ class VITSTrainer:
             'recon_loss': recon_loss.item(),
             'kl_loss': kl_loss.item(),
             'duration_loss': duration_loss.item(),
+            'stft_loss': stft_loss.item(),
             'token_duration_loss': token_loss.item(),
             'sum_duration_loss': sum_loss.item(),
             'pred_duration_sum_mean': pred_duration_sum.mean().item(),
@@ -251,6 +363,7 @@ class VITSTrainer:
 
             predicted_duration = outputs['duration'].squeeze(-1).detach()
             target_duration = self._build_pseudo_duration_targets(
+                phoneme_ids=batch['phoneme_ids'],
                 phoneme_lengths=phoneme_lengths,
                 mel_lengths=mel_lengths,
                 max_seq_len=predicted_duration.size(1),
@@ -302,7 +415,7 @@ class VITSTrainer:
                     )
                     # Compute loss with optional NaN protection
                     # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
-                    loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
+                    loss_dict = self.compute_loss(outputs, mel_spec, phoneme_ids, phoneme_lengths, mel_lengths, self.config)
 
                     if batch_idx == 0:
                         self.log_duration_debug("train", batch, outputs, loss_dict)
@@ -389,6 +502,9 @@ class VITSTrainer:
                     self.writer.add_scalar('train/predicted_mel_max', outputs['predicted_mel'].max().item(), self.global_step)
                     self.writer.add_scalar('train/predicted_mel_min', outputs['predicted_mel'].min().item(), self.global_step)
 
+                    # new v0.4.7: Log duration predictions as histogram for distribution monitoring
+                    self.writer.add_scalar('train/stft_loss', loss_dict['stft_loss'], self.global_step)
+                    
                     self.writer.add_histogram(
                         "duration_predictions",
                         outputs['duration'].detach().cpu(),
@@ -436,7 +552,7 @@ class VITSTrainer:
                 lengths=phoneme_lengths,
             )
 
-            loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
+            loss_dict = self.compute_loss(outputs, mel_spec, phoneme_ids, phoneme_lengths, mel_lengths, self.config)
             loss = loss_dict["total_loss"]
 
             if len(loss_dict) > 0 and valid_batches == 0:
@@ -466,6 +582,9 @@ class VITSTrainer:
             self.writer.add_scalar("val/token_duration_mae", loss_dict['token_duration_mae'], self.global_step)
             self.writer.add_scalar("val/sum_error_mean", loss_dict['sum_error_mean'], self.global_step)
             self.writer.add_scalar("val/pred_speech_rate_proxy", loss_dict['speech_rate_proxy_mean'], self.global_step)
+
+            # New v0.4.7: Log duration predictions as histogram for distribution monitoring
+            self.writer.add_scalar('val/stft_loss', loss_dict['stft_loss'], self.global_step)
 
             self.writer.add_scalar(
                 "val/duration_max",

@@ -43,6 +43,7 @@ device: cuda
 loss_weight_reconstruction: 1.0
 loss_weight_kl: 0.1
 loss_weight_duration: 0.1
+loss_weight_stft: 0.1
 validation_interval: 500
 checkpoint_interval: 500
 max_checkpoints_keep: 5
@@ -57,6 +58,7 @@ seed: 42
 temperature: 1.0
 inference_steps: 1
 max_duration_loss: 300
+max_duration_value: 20.0
 duration_token_alpha: 1.0
 duration_sum_beta: 0.2
-duration_debug_checks: true
+duration_debug_checks: false
