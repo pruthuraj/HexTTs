@@ -1,0 +1,13 @@
+data_dir: ./data/ljspeech_prepared
+audio_dir: ./data/LJSpeech-1.1/wavs
+log_dir: ./logs/sanity_run
+checkpoint_dir: ./checkpoints_sanity
+sample_rate: 22050
+n_mel_channels: 80
+batch_size: 4
+learning_rate: 0.0001
+num_epochs: 1
+num_workers: 2
+scheduler_type: exponential
+scheduler_gamma: 0.999
+use_cached_features: false

@@ -31,7 +31,7 @@ def run_cmd(args: list[str]) -> None:
 def cmd_train(args: argparse.Namespace) -> None:
     cmd = [
         sys.executable,
-        "train_vits.py",
+        "scripts/train.py",
         "--config",
         args.config,
         "--device",
@@ -47,7 +47,7 @@ def cmd_train(args: argparse.Namespace) -> None:
 def cmd_infer(args: argparse.Namespace) -> None:
     cmd = [
         sys.executable,
-        "inference_vits.py",
+        "scripts/infer.py",
         "--checkpoint",
         args.checkpoint,
         "--config",
@@ -193,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # train
     p_train = subparsers.add_parser("train", help="Run model training")
-    p_train.add_argument("--config", default="vits_config.yaml")
+    p_train.add_argument("--config", default="configs/base.yaml")
     p_train.add_argument("--device", default="cuda")
     p_train.add_argument("--checkpoint", default=None)
     p_train.set_defaults(func=cmd_train)
@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     # infer
     p_infer = subparsers.add_parser("infer", help="Run text-to-speech inference")
     p_infer.add_argument("--checkpoint", default="checkpoints/best_model.pt")
-    p_infer.add_argument("--config", default="vits_config.yaml")
+    p_infer.add_argument("--config", default="configs/base.yaml")
     p_infer.add_argument("--text", required=True)
     p_infer.add_argument("--output", default="tts_output/output.wav")
     p_infer.add_argument("--device", default="cpu")
@@ -220,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # audit
     p_audit = subparsers.add_parser("audit", help="Audit and filter dataset metadata")
-    p_audit.add_argument("--config", default="vits_config.yaml")
+    p_audit.add_argument("--config", default="configs/base.yaml")
     p_audit.add_argument("--dry-run", action="store_true")
     p_audit.add_argument("--min-duration", type=float, default=None)
     p_audit.add_argument("--max-duration", type=float, default=None)
@@ -235,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate and evaluate Griffin-Lim vs HiFi-GAN on same text",
     )
     p_compare.add_argument("--checkpoint", default="checkpoints/best_model.pt")
-    p_compare.add_argument("--config", default="vits_config.yaml")
+    p_compare.add_argument("--config", default="configs/base.yaml")
     p_compare.add_argument("--text", required=True)
     p_compare.add_argument("--device", default="cpu")
     p_compare.add_argument("--duration_scale", type=float, default=1.0)
@@ -252,8 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
         "continuation-test",
         help="Run continuation train + diagnostics + HiFi-GAN evaluation",
     )
-    p_test.add_argument("--base-config", default="vits_config.yaml")
-    p_test.add_argument("--out-config", default="vits_config.continue_auto.yaml")
+    p_test.add_argument("--base-config", default="configs/base.yaml")
+    p_test.add_argument("--out-config", default="configs/continue_auto.yaml")
     p_test.add_argument("--resume-checkpoint", default="checkpoints_sanity/checkpoint_step_003000.pt")
     p_test.add_argument("--epochs", type=int, default=3)
     p_test.add_argument("--device", default="cuda")

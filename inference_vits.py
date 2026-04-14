@@ -3,7 +3,6 @@ Inference Script for VITS TTS
 Generates speech from text using trained model
 """
 
-import pickle
 import warnings
 from pathlib import Path
 
@@ -13,9 +12,10 @@ import librosa
 import soundfile as sf
 import argparse
 from typing import Tuple, Optional
-import yaml
 
-from vits_model import VITS, VOCAB_SIZE
+from hextts.config import load_config
+from hextts.models.vits import build_vits_model, get_vocab_size
+from hextts.models.checkpointing import load_checkpoint, validate_checkpoint_compatibility
 from vits_data import PHONEME_TO_ID
 from vocoder import HiFiGANVocoder
 
@@ -45,22 +45,12 @@ class VITSInference:
 
         # Load model
         print(f"Loading model from {checkpoint_path}...")
-        config["vocab_size"] = VOCAB_SIZE
-        self.model = VITS(config).to(device)
+        config["vocab_size"] = get_vocab_size()
+        self.model = build_vits_model(config, device=device)
         self.model.eval()
 
-        # Load checkpoint - prefer weights_only=True for security;
-        # fall back to weights_only=False only for legacy checkpoints
-        try:
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except (RuntimeError, pickle.PickleError):
-            warnings.warn(
-                "Could not load checkpoint with weights_only=True; "
-                "falling back to weights_only=False. "
-                "Ensure the checkpoint file is trusted.",
-                UserWarning,
-            )
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = load_checkpoint(checkpoint_path, device=device)
+        validate_checkpoint_compatibility(checkpoint, config)
 
         # Allow loading older checkpoints that do not contain PostNet weights
         missing_keys, unexpected_keys = self.model.load_state_dict(
@@ -284,7 +274,7 @@ class VITSInference:
 def main():
     parser = argparse.ArgumentParser(description="VITS TTS Inference")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
-    parser.add_argument("--config", type=str, default="vits_config.yaml", help="Path to config file")
+    parser.add_argument("--config", type=str, default=None, help="Path to config file")
     parser.add_argument("--vocoder_checkpoint", type=str, default=None, help="Optional HiFi-GAN generator checkpoint")
     parser.add_argument("--vocoder_config", type=str, default=None, help="Optional HiFi-GAN config file")
     parser.add_argument("--duration_scale", type=float, default=1.0, help="Scale predicted durations (higher = slower speech)")
@@ -294,9 +284,8 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
     args = parser.parse_args()
 
-    # Load config
-    with open(args.config, "r") as f:
-        config = yaml.safe_load(f)
+    # Load config (prefers configs/base.yaml, falls back to vits_config.yaml)
+    config = load_config(args.config)
 
     # Set device
     if args.device == "cuda" and torch.cuda.is_available():

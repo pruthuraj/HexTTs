@@ -8,9 +8,9 @@ import sys
 import torch
 import argparse
 from pathlib import Path
-import yaml
 
-from inference_vits import VITSInference
+from hextts.config import load_config
+from hextts.inference import VITSInferencePipeline
 
 
 class TTSApp:
@@ -25,10 +25,9 @@ class TTSApp:
             config_path: path to config file
             device: cuda or cpu
         """
-        
-        # Load config
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
+
+        # Load config from the shared loader
+        self.config = load_config(config_path)
         
         # Set device
         if device == 'cuda' and torch.cuda.is_available():
@@ -37,9 +36,9 @@ class TTSApp:
         else:
             self.device = torch.device('cpu')
             print("Using CPU")
-        
+
         # Initialize inference engine
-        self.inference = VITSInference(checkpoint_path, self.config, self.device)
+        self.inference = VITSInferencePipeline(checkpoint_path, self.config, self.device)
         
         # Output directory
         self.output_dir = Path('tts_output')
@@ -165,7 +164,7 @@ Examples:
     
     parser.add_argument('--checkpoint', type=str, required=True,
                        help='Path to trained model checkpoint')
-    parser.add_argument('--config', type=str, default='vits_config.yaml',
+    parser.add_argument('--config', type=str, default='configs/base.yaml',
                        help='Path to config file')
     parser.add_argument('--text', type=str, default=None,
                        help='Text to synthesize (if not set, runs interactive mode)')

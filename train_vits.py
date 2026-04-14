@@ -9,7 +9,6 @@ Fixes:
 """
 
 import os
-import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -19,10 +18,18 @@ from torch.amp.grad_scaler import GradScaler
 from tqdm import tqdm
 import argparse
 
-from vits_model import VITS,VOCAB_SIZE
-# from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
-# Patched to use cached dataloader with warning tracking
-from vits_data import create_dataloaders, get_warning_summary, reset_warning_summary
+from hextts.config import load_config
+from hextts.data.dataloaders import (
+    create_dataloaders as create_shared_dataloaders,
+    get_warning_summary,
+    reset_warning_summary,
+)
+from hextts.models.vits import build_vits_model, get_vocab_size
+from hextts.models.checkpointing import (
+    load_checkpoint as load_shared_checkpoint,
+    save_checkpoint as save_shared_checkpoint,
+    validate_checkpoint_compatibility,
+)
 
 # Sample texts for validation generation (can be customized)
 SAMPLE_TEXTS = [
@@ -43,21 +50,17 @@ class VITSTrainer:
         
         # Initialize model
         print("Initializing VITS model...")
-        config['vocab_size'] = VOCAB_SIZE
+        config['vocab_size'] = get_vocab_size()
         print(f"Using vocabulary size: {config['vocab_size']}")
-        
-        self.model = VITS(config).to(device)
+
+        self.model = build_vits_model(config, device=device)
         
         total_params = sum(p.numel() for p in self.model.parameters())
         print(f"Total parameters: {total_params / 1e6:.2f}M")
         
         # Create dataloaders
         print("\nCreating dataloaders...")
-        self.train_loader, self.val_loader = create_dataloaders(
-            config,
-            batch_size=config['batch_size'],
-            num_workers=config.get('num_workers', 0)
-        )
+        self.train_loader, self.val_loader = create_shared_dataloaders(config)
         
         # Optimizer
         self.optimizer = optim.Adam(
@@ -399,7 +402,7 @@ class VITSTrainer:
                     if self.global_step % 500 == 0:
                         print("Printing warning summary...")
                         self.print_warning_summary()
-                        reset_warning_summary()
+                        reset_warning_summary(self.config)
                         
                 # Checkpoint
                 if self.global_step % self.config.get('checkpoint_interval', 1000) == 0:
@@ -570,32 +573,31 @@ class VITSTrainer:
             self.config['checkpoint_dir'],
             f"checkpoint_step_{self.global_step:06d}.pt"
         )
-        
-        checkpoint_dict = {
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'global_step': self.global_step,
-            'epoch': self.epoch,
-            'config': self.config,
-        }
-        
-        # Save GradScaler state if using AMP
-        if self.scaler is not None:
-            checkpoint_dict['scaler_state_dict'] = self.scaler.state_dict()
-        
-        torch.save(checkpoint_dict, checkpoint_path)
+
+        save_shared_checkpoint(
+            path=checkpoint_path,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            scaler=self.scaler,
+            epoch=self.epoch,
+            global_step=self.global_step,
+            config=self.config,
+        )
         
         print(f"Saved checkpoint: {checkpoint_path}")
     
     def load_checkpoint(self, checkpoint_path: str):
         """Load from checkpoint"""
-        # Note: weights_only=False to load optimizer state and training state
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        
+        checkpoint = load_shared_checkpoint(checkpoint_path, device=self.device)
+
+        validate_checkpoint_compatibility(checkpoint, self.config)
+
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.global_step = checkpoint['global_step']
-        self.epoch = checkpoint['epoch']
+        if 'optimizer_state_dict' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.global_step = int(checkpoint.get('global_step', 0))
+        self.epoch = int(checkpoint.get('epoch', 0))
         
         # Restore GradScaler state if using AMP
         if self.scaler is not None and 'scaler_state_dict' in checkpoint:
@@ -620,7 +622,7 @@ class VITSTrainer:
         # Print initial warning summary before training starts
         print("Initial warning summary before training:")
         self.print_warning_summary()
-        reset_warning_summary()
+        reset_warning_summary(self.config)
         
         # Main training loop - continues from current epoch (handles mid-epoch resumption)
         for epoch in range(self.epoch, num_epochs):
@@ -680,7 +682,7 @@ class VITSTrainer:
         
     def print_warning_summary(self):
         """Print summarized dataset/data-loader warnings."""
-        summary = get_warning_summary()
+        summary = get_warning_summary(self.config)
 
         has_any_warning = any(len(items) > 0 for items in summary.values())
         if not has_any_warning:
@@ -706,7 +708,7 @@ class VITSTrainer:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='vits_config.yaml',
+    parser.add_argument('--config', type=str, default='configs/base.yaml',
                        help='Path to config file')
     parser.add_argument('--checkpoint', type=str, default=None,
                        help='Path to checkpoint to resume from')
@@ -716,8 +718,7 @@ def main():
     
     # Load config
     print(f"Loading config from {args.config}")
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    config = load_config(args.config)
     
     # Set device
     if args.device == 'cuda' and torch.cuda.is_available():

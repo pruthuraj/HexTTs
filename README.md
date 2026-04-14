@@ -1,4 +1,4 @@
-# HexTTs: The Robot That Finally Learned to Speak
+﻿# HexTTs: The Robot That Finally Learned to Speak
 
 _v0.4.7_
 
@@ -26,6 +26,7 @@ _v0.4.7_
 - [Buzz Metric](#buzz-metric-spectral-flatness)
 - [A/B Comparison](#quick-ab-griffin-lim-vs-hifi-gan)
 - [Continuation Test](#continuation-test-3-epoch-automation)
+- [Architecture Transition](#architecture-transition-v050-path)
 - [Q&A](#qa-will-you-answer-my-questions)
 
 ---
@@ -47,6 +48,18 @@ _v0.4.7_
 
 In current tests, the restored hybrid duration path produced stable timing again (`~1.8576 s`) with clean waveform metrics (`ZCR ~0.115`, `flatness ~0.016`).
 Translation: less metallic mosquito energy, realistic timing, and no duration collapse drama.
+
+---
+
+## Architecture Transition (v0.5.0 Path)
+
+HexTTs is now migrating to a package-first layout under `hextts/`.
+
+- Use shared wrappers: `scripts/train.py`, `scripts/infer.py`
+- Shared contracts now live in `hextts/config`, `hextts/models`, `hextts/data`
+- Evaluation internals now live in `hextts/evaluation`
+
+Reference: `doc/architecture.md`
 
 ---
 

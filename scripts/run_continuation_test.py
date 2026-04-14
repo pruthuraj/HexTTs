@@ -237,8 +237,8 @@ def write_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run continuation train+infer+eval test pipeline")
-    parser.add_argument("--base-config", default="vits_config.yaml")
-    parser.add_argument("--out-config", default="vits_config.continue_auto.yaml")
+    parser.add_argument("--base-config", default="configs/base.yaml")
+    parser.add_argument("--out-config", default="configs/continue_auto.yaml")
     parser.add_argument("--resume-checkpoint", default="checkpoints_sanity/checkpoint_step_003000.pt")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--device", default="cuda")
