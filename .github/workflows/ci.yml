@@ -37,7 +37,7 @@ jobs:
       - name: Run config smoke check if available
         run: |
           if [ -f configs/base.yaml ] && [ -d hextts ]; then
-            python -c "from hextts.config import load_config; cfg = load_config('configs/base.yaml'); print('Config smoke check passed'); print(f'sample_rate={cfg.sample_rate}'); print(f'n_mels={cfg.n_mels}')"
+            python -c "from hextts.config import load_config; cfg = load_config('configs/base.yaml'); print('Config smoke check passed'); print(f'sample_rate={cfg[\"sample_rate\"]}'); print(f'n_mel_channels={cfg[\"n_mel_channels\"]}')"
           else
             echo "Config module or base config not present yet; skipping smoke check."
           fi
