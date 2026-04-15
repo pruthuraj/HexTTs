@@ -8,3 +8,6 @@ version = "0.5.0"
 description = "HexTTs text-to-speech research project"
 readme = "README.md"
 requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
