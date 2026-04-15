@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-  pull_request:
 
 jobs:
   test:
@@ -37,28 +36,13 @@ jobs:
           if [ -d tests ]; then
             python -m pytest -q
           else
-            echo "No tests/ directory yet; skipping pytest."
+            echo "No tests directory yet; skipping pytest."
           fi
 
       - name: Run config smoke check if available
         run: |
           if [ -f configs/base.yaml ] && [ -d hextts ]; then
-            python - <<'PY'
-from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(".").resolve()))
-
-try:
-    from hextts.config import load_config
-    cfg = load_config("configs/base.yaml")
-    print("Config smoke check passed")
-    print(f"sample_rate={cfg.sample_rate}")
-    print(f"n_mels={cfg.n_mels}")
-except Exception as e:
-    print(f"Config smoke check failed: {e}")
-    raise
-PY
+            python -c "import sys; from pathlib import Path; sys.path.insert(0, str(Path('.').resolve())); from hextts.config import load_config; cfg = load_config('configs/base.yaml'); print('Config smoke check passed'); print(f'sample_rate={cfg.sample_rate}'); print(f'n_mels={cfg.n_mels}')"
           else
             echo "Config module or base config not present yet; skipping smoke check."
           fi
