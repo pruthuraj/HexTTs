@@ -23,13 +23,8 @@ jobs:
           python -m pip install "numpy<2.0" pytest pyyaml tqdm scipy soundfile librosa g2p_en
           python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install package if pyproject exists
-        run: |
-          if [ -f pyproject.toml ] || [ -f setup.py ]; then
-            python -m pip install -e .
-          else
-            echo "No pyproject.toml or setup.py yet; skipping editable install."
-          fi
+      - name: Skip editable install during refactor phase
+        run: echo "Skipping pip install -e . until package discovery is explicitly configured."
 
       - name: Run tests if present
         run: |
@@ -42,7 +37,7 @@ jobs:
       - name: Run config smoke check if available
         run: |
           if [ -f configs/base.yaml ] && [ -d hextts ]; then
-            python -c "import sys; from pathlib import Path; sys.path.insert(0, str(Path('.').resolve())); from hextts.config import load_config; cfg = load_config('configs/base.yaml'); print('Config smoke check passed'); print(f'sample_rate={cfg.sample_rate}'); print(f'n_mels={cfg.n_mels}')"
+            python -c "from hextts.config import load_config; cfg = load_config('configs/base.yaml'); print('Config smoke check passed'); print(f'sample_rate={cfg.sample_rate}'); print(f'n_mels={cfg.n_mels}')"
           else
             echo "Config module or base config not present yet; skipping smoke check."
           fi
