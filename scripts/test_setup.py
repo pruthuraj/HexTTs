@@ -5,6 +5,7 @@ Tests: PyTorch, CUDA, Audio libs, Phoneme conversion, Data loading
 
 import sys
 import os
+import pytest
 
 
 def test_pytorch():
@@ -16,6 +17,7 @@ def test_pytorch():
     try:
         import torch
         print(f"✓ PyTorch version: {torch.__version__}")
+        assert torch is not None, "PyTorch import failed"
         
         cuda_available = torch.cuda.is_available()
         if cuda_available:
@@ -27,11 +29,9 @@ def test_pytorch():
             print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         else:
             print(f"⚠ CUDA available: NO (CPU-only mode)")
-        
-        return True
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"PyTorch test failed: {e}")
 
 def test_audio_libs():
     """Test audio processing libraries"""
@@ -42,17 +42,18 @@ def test_audio_libs():
     try:
         import librosa
         print(f"✓ librosa version: {librosa.__version__}")
+        assert librosa is not None, "librosa import failed"
         
         import soundfile
         print(f"✓ soundfile version: {soundfile.__version__}")
+        assert soundfile is not None, "soundfile import failed"
         
         import scipy
         print(f"✓ scipy version: {scipy.__version__}")
-        
-        return True
+        assert scipy is not None, "scipy import failed"
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"Audio libs test failed: {e}")
 
 def test_phoneme_conversion():
     """Test phoneme conversion"""
@@ -65,6 +66,7 @@ def test_phoneme_conversion():
         print("✓ g2p_en imported successfully")
         
         g2p = G2p()
+        assert g2p is not None, "G2p initialization failed"
         
         # Small smoke set verifies end-to-end text->phoneme path.
         test_texts = [
@@ -76,12 +78,11 @@ def test_phoneme_conversion():
         for text in test_texts:
             phonemes = g2p(text)
             phoneme_str = ''.join(phonemes)
+            assert len(phoneme_str) > 0, f"Phoneme conversion failed for '{text}'"
             print(f"  '{text}' → {phoneme_str}")
-        
-        return True
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"Phoneme conversion test failed: {e}")
 
 def test_numpy_version():
     """Test NumPy version (critical for compatibility)"""
@@ -96,16 +97,16 @@ def test_numpy_version():
         
         print(f"✓ NumPy version: {version}")
         
-        if major >= 2:
-            print(f"⚠ WARNING: NumPy 2.x may cause compatibility issues")
-            print(f"  Consider downgrading: pip install 'numpy<2'")
-            return False
-        else:
-            print(f"✓ NumPy version is compatible (< 2.0)")
-            return True
+        assert major < 2, f"NumPy 2.x is not compatible. Current: {version}. Run: pip install 'numpy<2'"
+        print(f"✓ NumPy version is compatible (< 2.0)")
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"NumPy version test failed: {e}")
+
+@pytest.fixture
+def data_path():
+    """Fixture for dataset path"""
+    return "./data/LJSpeech-1.1"
 
 def test_data_loading(data_path):
     """Test loading audio files"""
@@ -123,14 +124,12 @@ def test_data_loading(data_path):
         if not os.path.exists(wavs_dir):
             print(f"⚠ Dataset not found at: {wavs_dir}")
             print(f"  Skipping data loading test")
-            return True  # Not a failure, just not present yet
+            pytest.skip("Dataset not available")
         
         # Get first audio file
         wav_files = [f for f in os.listdir(wavs_dir) if f.endswith('.wav')]
         
-        if not wav_files:
-            print(f"⚠ No .wav files found in {wavs_dir}")
-            return False
+        assert wav_files, f"No .wav files found in {wavs_dir}"
         
         # Load first file
         first_file = wav_files[0]
@@ -147,26 +146,29 @@ def test_data_loading(data_path):
         mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=80)
         print(f"✓ Computed mel spectrogram")
         print(f"  Shape: {mel_spec.shape}")
-        
-        return True
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"Data loading test failed: {e}")
 
-def test_metadata_files(data_path):
+@pytest.fixture
+def prepared_data_path():
+    """Fixture for prepared dataset path"""
+    return "./data/ljspeech_prepared"
+
+def test_metadata_files(prepared_data_path):
     """Test that metadata files exist"""
     print("\n" + "="*60)
     print("6. Testing Prepared Metadata")
     print("="*60)
     
     try:
-        train_file = os.path.join(data_path, "train.txt")
-        val_file = os.path.join(data_path, "val.txt")
+        train_file = os.path.join(prepared_data_path, "train.txt")
+        val_file = os.path.join(prepared_data_path, "val.txt")
         
         if not os.path.exists(train_file):
             print(f"⚠ Training metadata not found: {train_file}")
             print(f"  Run: python scripts/prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared")
-            return True
+            pytest.skip("Prepared metadata not available")
         
         # Count lines
         with open(train_file, 'r', encoding='utf-8') as f:
@@ -182,11 +184,9 @@ def test_metadata_files(data_path):
         with open(train_file, 'r', encoding='utf-8') as f:
             sample = f.readline().strip()
         print(f"✓ Sample line: {sample[:80]}...")
-        
-        return True
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        raise AssertionError(f"Metadata files test failed: {e}")
 
 def main():
     """Run all setup checks and print a concise pass/fail summary."""

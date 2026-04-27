@@ -1,4 +1,4 @@
-"""
+﻿"""
 Training Script for VITS TTS Model
 Handles the complete training pipeline
 Training Script for patched VITS-like TTS model
@@ -31,12 +31,36 @@ from hextts.models.checkpointing import (
     validate_checkpoint_compatibility,
 )
 from hextts.training.losses import MultiScaleMelLoss
+from hextts.data.raw_dataset import PHONEME_TO_ID
 
 # Sample texts for validation generation (can be customized)
 SAMPLE_TEXTS = [
     "Hello, I am HexTTS. This is a training sample.",
     "Neural text to speech is learning step by step.",
 ]
+
+
+def _text_to_phoneme_ids(text: str) -> list:
+    """Convert text to phoneme IDs via g2p_en + PHONEME_TO_ID.
+
+    Returns None if g2p_en is unavailable or produces empty output,
+    so callers can skip sample generation gracefully instead of
+    synthesizing garbage from ord(char) % vocab_size.
+    """
+    try:
+        from g2p_en import G2p
+        g2p = G2p()
+        phonemes = g2p(text)
+        ids = []
+        for p in phonemes:
+            p = p.strip().upper().rstrip("012")
+            if not p or p == " ":
+                continue
+            if p in PHONEME_TO_ID:
+                ids.append(PHONEME_TO_ID[p])
+        return ids if ids else None
+    except Exception:
+        return None
 
 class VITSTrainer:
     """Trainer class for VITS model patched with text-conditioned latent prior and improved logging/warning tracking."""
@@ -174,7 +198,10 @@ class VITSTrainer:
         mu = outputs['mu']
         logvar = outputs['logvar']
 
-        # Align predicted lengths to target mel length
+        # Align predicted lengths to target mel length when duration rounding causes a mismatch.
+        # Ideally this fires rarely; large or frequent mismatches indicate duration supervision drift.
+        # The mismatch magnitude is logged to TensorBoard as train/length_mismatch_frames.
+        length_mismatch = abs(predicted_mel.size(2) - mel_spec.size(2))
         if predicted_mel.size(2) != mel_spec.size(2):
             predicted_mel = nn.functional.interpolate(
                 predicted_mel, size=mel_spec.size(2), mode="linear", align_corners=False,
@@ -268,6 +295,7 @@ class VITSTrainer:
             'token_duration_mae': token_mae.item(),
             'sum_error_mean': sum_abs_error.mean().item(),
             'speech_rate_proxy_mean': speech_rate_proxy.mean().item(),
+            'length_mismatch_frames': length_mismatch,
         }
 
     def log_duration_debug(
@@ -314,7 +342,9 @@ class VITSTrainer:
         self.model.train()
         total_loss = 0.0
         valid_batches = 0
-        
+        skipped_batches = 0
+        epoch_skip_reasons: dict = {}
+
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch + 1}")
         
         for batch_idx, batch in enumerate(pbar):
@@ -343,25 +373,26 @@ class VITSTrainer:
                     if batch_idx == 0:
                         self.log_duration_debug("train", batch, outputs, loss_dict)
                     
-                    # NaN protection: skip batch if duration loss is excessively high (indicates instability)
-                    # duration explosion skip” no longer works as intended 
-                    # due to change to relative error supervision, so we rely on the clamping in the loss function and
-                    # the additional check below for extreme duration values.
-                    # if loss_dict["duration_loss"] > self.config.get("max_duration_loss", 300):
-                    #     print("Skipping unstable batch due to duration explosion")
-                    #     continue
-                    
-                    # in v0.4.3: Additional NaN protection: skip batch if any predicted duration exceeds
-                    # the configured maximum duration value (values exactly at the clamp boundary are valid).
                     max_duration_value = self.config.get("max_duration_value", 20.0)
                     if outputs['duration'].max().item() > max_duration_value:
-                        print("Skipping unstable batch due to extreme duration values")
+                        reason = "extreme_duration"
+                        epoch_skip_reasons[reason] = epoch_skip_reasons.get(reason, 0) + 1
+                        skipped_batches += 1
+                        print(f"[skip] batch {batch_idx}: extreme duration ({outputs['duration'].max().item():.1f} > {max_duration_value})")
                         continue
-                    
+
                     loss = loss_dict['total_loss']
-                    # Check for NaN or Inf loss
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        print("NaN detected — skipping batch")
+                    if torch.isnan(loss):
+                        reason = "nan_loss"
+                        epoch_skip_reasons[reason] = epoch_skip_reasons.get(reason, 0) + 1
+                        skipped_batches += 1
+                        print(f"[skip] batch {batch_idx}: NaN loss")
+                        continue
+                    if torch.isinf(loss):
+                        reason = "inf_loss"
+                        epoch_skip_reasons[reason] = epoch_skip_reasons.get(reason, 0) + 1
+                        skipped_batches += 1
+                        print(f"[skip] batch {batch_idx}: Inf loss")
                         continue
                 
                 # Backward pass
@@ -402,7 +433,8 @@ class VITSTrainer:
                         'loss': f'{avg_loss:.4f}',
                         'recon': f'{loss_dict["recon_loss"]:.4f}',
                         'kl': f'{loss_dict["kl_loss"]:.4f}',
-                        "dur": f'{loss_dict["duration_loss"]:.4f}',
+                        'dur': f'{loss_dict["duration_loss"]:.4f}',
+                        'skip': skipped_batches,
                     })
                     
                     # TensorBoard
@@ -416,8 +448,10 @@ class VITSTrainer:
                     self.writer.add_scalar('train/duration_token_loss', loss_dict['token_duration_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_sum_loss', loss_dict['sum_duration_loss'], self.global_step)
                     self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], self.global_step)
+                    self.writer.add_scalar('train/skipped_batches', skipped_batches, self.global_step)
+                    self.writer.add_scalar('train/length_mismatch_frames', loss_dict['length_mismatch_frames'], self.global_step)
 
-                    # New v0.4.3: Duration diagnostics
+                    # Duration diagnostics
                     self.writer.add_scalar('train/pred_duration_sum_mean', loss_dict['pred_duration_sum_mean'], self.global_step)
                     self.writer.add_scalar('train/target_duration_sum_mean', loss_dict['target_duration_sum_mean'], self.global_step)
                     self.writer.add_scalar('train/token_duration_mae', loss_dict['token_duration_mae'], self.global_step)
@@ -426,7 +460,7 @@ class VITSTrainer:
                     self.writer.add_scalar('train/duration_max', outputs['duration'].max().item(), self.global_step)
                     self.writer.add_scalar('train/duration_min', outputs['duration'].min().item(), self.global_step)
 
-                    # New v0.4.3: Mel/output diagnostics
+                    # Mel/output diagnostics
                     self.writer.add_scalar('train/predicted_mel_length', outputs['predicted_mel'].shape[2], self.global_step)
                     self.writer.add_scalar('train/target_mel_length_mean', mel_lengths.float().mean().item(), self.global_step)
                     self.writer.add_scalar('train/predicted_mel_max', outputs['predicted_mel'].max().item(), self.global_step)
@@ -451,11 +485,24 @@ class VITSTrainer:
             except Exception as e:
                 print(f"Error in batch {batch_idx}: {e}")
                 continue
-        # old 
-        # avg_epoch_loss = total_loss / len(self.train_loader)
-        # return avg_epoch_loss
-        # patched to handle potential skipped batches due to NaN loss
-        return total_loss / max(1, valid_batches) # Avoid division by zero
+
+        # End-of-epoch skip summary
+        total_batches = valid_batches + skipped_batches
+        if skipped_batches > 0:
+            skip_ratio = skipped_batches / max(1, total_batches)
+            print(f"\n[skip summary] epoch {self.epoch + 1}: {skipped_batches}/{total_batches} batches skipped ({skip_ratio:.1%})")
+            for reason, count in epoch_skip_reasons.items():
+                print(f"  {reason}: {count}")
+            self.writer.add_scalar('train/epoch_skip_ratio', skip_ratio, self.epoch)
+            max_skip_ratio = float(self.config.get('max_skipped_ratio', 0.5))
+            if skip_ratio > max_skip_ratio:
+                raise RuntimeError(
+                    f"Training aborted: {skip_ratio:.1%} of batches were skipped in epoch {self.epoch + 1} "
+                    f"(threshold: {max_skip_ratio:.1%}). "
+                    "Check for NaN/Inf in model outputs or extreme duration values."
+                )
+
+        return total_loss / max(1, valid_batches)
         
         
     
@@ -560,11 +607,11 @@ class VITSTrainer:
         # Process each sample text
         for i, text in enumerate(SAMPLE_TEXTS):
             try:
-                # Convert text characters to phoneme IDs using character code modulo vocab size
-                # (Quick & dirty but works for ASCII input)
-                seq = [ord(c) % self.config['vocab_size'] for c in text]
+                seq = _text_to_phoneme_ids(text)
+                if not seq:
+                    print(f"Skipping TensorBoard sample {i}: g2p unavailable or empty output")
+                    continue
 
-                # Create batch tensor: shape (1, seq_len)
                 x = torch.LongTensor(seq).unsqueeze(0).to(self.device)
                 # Phoneme sequence length for masking during inference
                 x_lengths = torch.LongTensor([x.size(1)]).to(self.device)
@@ -679,22 +726,24 @@ class VITSTrainer:
             
             # Generate audio samples every 5 epochs
             if (epoch + 1) % 5 == 0:
-                try:
-                    generate_samples(
-                        model=self.model,
-                        texts=SAMPLE_TEXTS,
-                        text_to_sequence_fn=lambda t: [ord(c) % self.config['vocab_size'] for c in t],
-                        output_dir="samples",
-                        epoch=epoch + 1,
-                        device=self.device.type,
-                        sample_rate=self.config.get("sample_rate", 22050),
-                        config=self.config,
-                    )
-                    # Log generated samples to TensorBoard
-                    self.log_audio_samples(epoch + 1)
-                    print(f"Saved audio samples for epoch {epoch + 1}")
-                except Exception as e:
-                    print(f"Sample generation failed: {e}")
+                if _text_to_phoneme_ids(SAMPLE_TEXTS[0]) is None:
+                    print("Skipping sample generation: g2p_en unavailable or returned empty output")
+                else:
+                    try:
+                        generate_samples(
+                            model=self.model,
+                            texts=SAMPLE_TEXTS,
+                            text_to_sequence_fn=_text_to_phoneme_ids,
+                            output_dir="samples",
+                            epoch=epoch + 1,
+                            device=self.device.type,
+                            sample_rate=self.config.get("sample_rate", 22050),
+                            config=self.config,
+                        )
+                        self.log_audio_samples(epoch + 1)
+                        print(f"Saved audio samples for epoch {epoch + 1}")
+                    except Exception as e:
+                        print(f"Sample generation failed: {e}")
             
             # Learning rate schedule (epoch-based; held back until warmup finishes)
             if self.scheduler and self.global_step >= self.warmup_total_steps:

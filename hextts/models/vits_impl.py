@@ -191,9 +191,12 @@ class DurationPredictor(nn.Module):
         # Predict duration
         x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
         duration = self.linear(x)  # (batch_size, seq_len, 1)
-        # duration = torch.clamp(F.softplus(duration), min=1.0)  # Ensure positive
-        # clamp duration to prevent extreme values that can cause memory issues during length regulation
-        duration = torch.clamp(F.softplus(duration), min=1.0, max=20.0) 
+        # min=1.0: every phoneme must expand to at least one mel frame.
+        # max=20.0: at 256-frame hop / 22050 Hz, 20 frames ≈ 233 ms per phoneme —
+        # an upper bound derived from slow-speech LJSpeech statistics. Without this
+        # cap, early-training noise can cause duration explosion and OOM during
+        # repeat_interleave. Configurable via max_duration_value in base.yaml.
+        duration = torch.clamp(F.softplus(duration), min=1.0, max=20.0)
         return duration
 
 

@@ -78,23 +78,38 @@ class VITSInference:
         self.mel_f_min = config["mel_f_min"]
         self.mel_f_max = config["mel_f_max"]
         self.ref_level_db = config["ref_level_db"]
+        self.min_level_db = config["min_level_db"]
 
     def text_to_phonemes(self, text: str) -> str:
-        """Convert raw text to a whitespace-separated phoneme string."""
+        """Convert raw text to a whitespace-separated phoneme string.
+
+        Raises RuntimeError if g2p_en is unavailable or fails — continuing
+        with the raw text would produce garbage phoneme IDs and silent/noisy output.
+        """
         try:
             from g2p_en import G2p
-
             g2p = G2p()
+        except ImportError as exc:
+            raise RuntimeError(
+                "g2p_en is not installed. Install it with: pip install g2p_en"
+            ) from exc
+
+        try:
             phoneme_list = g2p(text)
-
-            phonemes = [p.rstrip("012") for p in phoneme_list]
-            phonemes = [p for p in phonemes if p and p != " "]
-
-            return " ".join(phonemes)
         except Exception as exc:
-            # Fallback keeps inference usable even when g2p backend is unavailable.
-            print(f"Error converting text to phonemes: {exc}")
-            return text
+            raise RuntimeError(
+                f"g2p_en failed to convert text to phonemes: {exc!r}"
+            ) from exc
+
+        phonemes = [p.rstrip("012") for p in phoneme_list]
+        phonemes = [p for p in phonemes if p and p != " "]
+
+        if not phonemes:
+            raise RuntimeError(
+                f"g2p_en returned no valid phonemes for text: {text!r}"
+            )
+
+        return " ".join(phonemes)
 
     def phonemes_to_ids(self, phoneme_str: str) -> torch.Tensor:
         """Map phoneme tokens to model IDs and return shape (1, seq_len) tensor."""
@@ -138,15 +153,20 @@ class VITSInference:
             raise ValueError("predicted_mel contains NaN or Inf")
 
         mel_spec = mel_spec.squeeze(0).cpu().numpy()
-        # Inverse of training-time normalization convention used in this codebase.
-        mel_spec = mel_spec * -self.ref_level_db + self.ref_level_db
+        # Inverse of training normalization: norm = (mel_db - min_level_db) / -min_level_db
+        # → mel_db = norm * -min_level_db + min_level_db
+        # Output is in [min_level_db, 0] dB.
+        mel_spec = mel_spec * -self.min_level_db + self.min_level_db
         return mel_spec
 
     def mel_spectrogram_to_audio(self, mel_spec: np.ndarray) -> np.ndarray:
         """Convert mel to waveform via HiFi-GAN when present, else Griffin-Lim fallback."""
         if self.vocoder is not None:
-            # HiFi-GAN expects normalized mel in range [0, 1] under current wrapper.
-            mel_for_vocoder = np.clip((self.ref_level_db - mel_spec) / self.ref_level_db, 0.0, 1.0)
+            # Re-normalize dB-scale mel back to [0, 1] using the same convention as the dataset.
+            # norm = (mel_db - min_level_db) / -min_level_db → [0, 1] for mel_db ∈ [min_level_db, 0]
+            mel_for_vocoder = np.clip(
+                (mel_spec - self.min_level_db) / -self.min_level_db, 0.0, 1.0
+            )
             return self.vocoder(mel_for_vocoder.astype(np.float32))
 
         # Griffin-Lim fallback path for environments without neural vocoder assets.

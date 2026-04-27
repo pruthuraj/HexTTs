@@ -25,6 +25,10 @@ PHONEME_TO_ID = {
     'PAD': 39,
 }
 
+# WARNING: this dict is module-level and not multiprocessing-safe.
+# Each DataLoader worker (num_workers > 0) runs in a separate process with its own
+# copy — warnings emitted by workers are never aggregated in the main process.
+# Counts here reflect only the main-process view (useful for num_workers=0 debugging).
 WARNING_STATS = {
     "unknown_phoneme": defaultdict(int),
     "audio_load_error": defaultdict(int),
@@ -86,10 +90,9 @@ class TTSDataset(Dataset):
         wav_path = os.path.join(self.audio_dir, f"{filename}.wav")
         try:
             audio, sr = librosa.load(wav_path, sr=self.sample_rate)
-        except Exception as e:
-            record_warning("audio_load_error", filename) # Log the filename that failed to load
-            # Return silence if load fails
-            audio = np.zeros(self.sample_rate * 5)
+        except Exception as exc:
+            record_warning("audio_load_error", filename)
+            raise RuntimeError(f"Failed to load audio: {wav_path}") from exc
         
         # Convert to mel-spectrogram
         mel_spec = self._audio_to_mel(audio)
@@ -126,9 +129,13 @@ class TTSDataset(Dataset):
         # Convert to dB scale
         mel_spec = np.maximum(mel_spec, 1e-8)  # avoid log of zero
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-        
-        # Normalize
-        mel_spec_norm = (mel_spec_db - self.ref_level_db) / -self.ref_level_db
+        # mel_spec_db is in (-inf, 0] dB relative to the per-utterance maximum.
+
+        # Map [min_level_db, 0] → [0, 1].
+        # Dividing by -min_level_db (positive) gives 1.0 at 0 dB and 0.0 at min_level_db.
+        # Previously used ref_level_db (20) here, which produced (mel_db - 20) / -20 ≥ 1.0
+        # for all valid mel_db ≤ 0 — i.e. every training target was clipped to constant 1.0.
+        mel_spec_norm = (mel_spec_db - self.min_level_db) / -self.min_level_db
         mel_spec_norm = np.clip(mel_spec_norm, 0, 1)
         
         return mel_spec_norm

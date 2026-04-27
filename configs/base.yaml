@@ -111,7 +111,8 @@ max_seq_length: 300 # Maximum mel frame length kept per training sample.
 seed: 42 # Random seed for reproducibility.
 
 # Guardrail used by trainer for unstable duration batches.
-max_duration_loss: 300 # Safety threshold for skipping unstable high-duration-loss batches.
+max_duration_value: 20.0 # Max allowed predicted duration per phoneme (frames). Batches exceeding this are skipped.
+max_skipped_ratio: 0.5 # If more than this fraction of batches in an epoch are skipped, training aborts.
 
 # Optional training debug printouts for duration internals.
 duration_debug_checks: false # Enable verbose duration debug prints in trainer.

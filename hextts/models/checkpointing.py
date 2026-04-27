@@ -9,13 +9,6 @@ from typing import Any, Dict, Optional
 import torch
 
 
-def _safe_torch_load(path: str, map_location: torch.device, weights_only: bool) -> Dict[str, Any]:
-    """Load checkpoint with best-effort compatibility across torch versions."""
-    try:
-        return torch.load(path, map_location=map_location, weights_only=weights_only)
-    except TypeError:
-        # Backward compatibility for older torch that does not support weights_only.
-        return torch.load(path, map_location=map_location)
 
 
 def build_checkpoint_metadata(config: Dict[str, Any], model_version: str) -> Dict[str, Any]:
@@ -102,16 +95,22 @@ def save_checkpoint(
     torch.save(payload, out_path)
 
 
-def load_checkpoint(path: str, device: torch.device, allow_legacy_pickle: bool = True) -> Dict[str, Any]:
-    """Load checkpoint with safer default behavior."""
-    # Prefer weights-only loading first to reduce pickle surface area.
+def load_checkpoint(path: str, device: torch.device) -> Dict[str, Any]:
+    """Load checkpoint using safe weights-only deserialization.
+
+    Requires torch >= 1.13. If loading fails, the checkpoint may have been saved
+    with an older torch version. Re-save it using save_checkpoint() before loading.
+    """
     try:
-        ckpt = _safe_torch_load(path, map_location=device, weights_only=True)
-    except Exception:
-        if not allow_legacy_pickle:
-            raise
-        # Fallback supports older checkpoints that contain optimizer/scheduler objects.
-        ckpt = _safe_torch_load(path, map_location=device, weights_only=False)
+        ckpt = torch.load(path, map_location=device, weights_only=True)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load checkpoint '{path}' safely.\n"
+            "This usually means the checkpoint was saved with an older torch version "
+            "that pickled non-tensor objects.\n"
+            "To migrate: load with weights_only=False once in a trusted environment, "
+            "then re-save using save_checkpoint()."
+        ) from exc
 
     if not isinstance(ckpt, dict):
         raise ValueError(f"Invalid checkpoint payload type: {type(ckpt)}")

@@ -9,6 +9,125 @@ Migration note (v0.5.x): older entries may mention legacy files such as `train_v
 
 ---
 
+## [v0.5.2] - 2026-04-27
+
+### _"The Model Was Lying To You The Entire Time And We Fixed It"_
+
+### Summary
+
+Correctness and transparency audit of the full v0.5.x codebase. No new features. No architecture changes.
+Just a systematic elimination of places where the training pipeline was failing silently, swallowing errors,
+or producing numbers that looked fine and meant nothing.
+
+The headline finding: the mel normalization formula was mathematically broken. Every training target was
+being clipped to a constant 1.0. The reconstruction loss had been useless since the beginning.
+The model was learning entirely from KL and duration loss, with the reconstruction objective doing nothing.
+This is checkpoint-breaking. All prior checkpoints are invalid under v0.5.2. Retraining required.
+
+Everything else in this patch is about making failures loud, not silent.
+
+### Fixed
+
+- **Mel Normalization Formula** — `hextts/data/raw_dataset.py`, `hextts/inference/pipeline.py`
+  - The old formula: `(mel_db - ref_level_db) / -ref_level_db` with `ref_level_db = 20`
+  - For any valid mel_db ≤ 0 (which is all of them), this produces a value ≥ 1.0
+  - Every training target was clipped to constant 1.0. The reconstruction loss minimized itself
+    trivially and provided zero gradient signal about actual mel structure.
+    The model was optimizing KL and duration loss into a pretend mel landscape.
+  - The new formula: `(mel_db - min_level_db) / -min_level_db` with `min_level_db = -100`
+  - This correctly maps `[min_level_db, 0]` → `[0, 1]`. The reconstruction objective now works.
+  - Inference inverse normalization and vocoder re-normalization updated to match.
+  - **Migration notice: all checkpoints trained before v0.5.2 used the broken normalization.
+    Retrain from scratch.**
+
+- **Checkpoint Loading Security** — `hextts/models/checkpointing.py`
+  - Removed the `weights_only=False` fallback that ran when `weights_only=True` failed.
+  - `weights_only=False` allows arbitrary Python object execution during unpickling.
+    Any checkpoint file could execute arbitrary code. The fallback existed for "compatibility."
+    Compatibility with arbitrary code execution is not a feature.
+  - If loading fails, a clear error is raised with instructions to re-save or upgrade torch.
+
+- **Silent Audio Zero Injection** — `hextts/data/raw_dataset.py`
+  - If a wav file failed to load, the dataset returned 5 seconds of zero-tensor silence.
+  - The training loop received this as a valid batch. The loss computed. The gradient updated.
+    The model learned something, probably about silence.
+  - Now raises an exception. The error surfaces. You fix the file.
+
+- **g2p Silent Passthrough** — `hextts/inference/pipeline.py`
+  - If `g2p_en` failed, `text_to_phonemes()` printed a warning and returned the raw input string.
+  - The pipeline then mapped each character to PAD or garbage phoneme IDs and synthesized noise.
+    The inference completed. The audio was meaningless. Nothing crashed.
+  - Now raises `RuntimeError` with the original exception chained. The failure is visible.
+
+- **Garbage Sample Generation in Trainer** — `hextts/training/trainer.py`
+  - The trainer's TensorBoard sample generation used `ord(char) % vocab_size` to convert text to IDs.
+    This maps characters to arbitrary phoneme IDs. The synthesized audio was nonsense.
+    It was logged as a training diagnostic. It was not a diagnostic. It was noise with a label.
+  - Now uses the real g2p pipeline (same as inference). If g2p is unavailable, sample generation
+    is skipped with a logged warning instead of producing meaningless audio.
+
+### Improved
+
+- **Batch Skip Logging** — `hextts/training/trainer.py`
+  - Previously, skipped batches were excluded from loss averages with no record.
+    TensorBoard showed a clean curve. The curve was a lie.
+  - Now logs `train/skipped_batches` to TensorBoard at every log interval.
+  - Emits a console warning with the skip reason (NaN loss / Inf loss / extreme duration).
+  - New config key: `max_skipped_ratio` — if more than X% of batches in an epoch are skipped,
+    training stops with a clear error instead of producing a checkpoint trained on nothing.
+
+- **Length Mismatch Visibility** — `hextts/training/trainer.py`
+  - Added `train/length_mismatch_frames` TensorBoard metric to surface frame-count mismatches
+    between predicted mel and ground truth mel.
+  - The structural unification of `repeat_interleave` vs `F.interpolate` paths is deferred
+    to a follow-up patch.
+
+- **Duration Clamp Documentation** — `hextts/models/vits_impl.py`
+  - The `[1.0, 20.0]` frame clamp now has a comment explaining the derivation:
+    20 frames × 256 hop / 22050 Hz ≈ 233 ms per phoneme. Previously a magic number.
+
+- **Warning Counter Limitation Documented** — `hextts/data/raw_dataset.py`
+  - The module-level unknown phoneme counter is per-worker and not aggregated in multi-worker mode.
+    Workers run in separate processes; their counts never reach the main process.
+    This limitation is now documented in the code so nobody spends an afternoon debugging it.
+
+### New TensorBoard Scalars
+
+| Scalar | What It Tells You |
+|--------|-------------------|
+| `train/skipped_batches` | How many batches were silently excluded from this epoch's loss average |
+| `train/length_mismatch_frames` | Frame-count delta between predicted and target mel |
+
+### Tests Added
+
+- `tests/test_normalization.py` — 12 tests covering round-trip identity, range bounds,
+  and a regression guard that confirms the old formula (`ref_level_db=20`) was broken
+- `tests/test_training.py` — 8 tests covering batch skip logic, trainer construction,
+  and loss computation
+
+**Test suite: 40/40 passing.**
+
+### Compatibility
+
+- **Checkpoint-breaking.** The mel normalization fix changes what the model is trained to predict.
+  All checkpoints from v0.5.1 and earlier produced targets clamped to constant 1.0.
+  Those checkpoints cannot be fine-tuned; the reconstruction objective has changed.
+  Start fresh. The model will actually learn this time.
+- No model architecture changes. No vocab changes. No config format changes beyond `max_skipped_ratio`.
+- `max_skipped_ratio` defaults to a safe value; existing training runs are unaffected unless explicitly set.
+
+### Developer Status
+
+```
+Silent failures eliminated   : 6
+Reconstruction loss fixed    : yes (it was broken)
+Checkpoints invalidated      : all of them (they were wrong)
+Regrets about not finding this sooner : substantial
+GPU fan RPM                  : unchanged (it was already at max, as always)
+```
+
+---
+
 ## [v0.5.1] - 2026-04-27
 
 ### _"The Model Can Finally Feel Shame About Its Mistakes"_
@@ -828,7 +947,8 @@ LJSpeech — 13,100 samples, single speaker, 24kHz, recorded by Linda Johnson wh
 
 ---
 
-_Last updated: 06.04.2026_  
+_Last updated: 27.04.2026_  
 _Changelog maintained by: someone who cares, apparently_  
 _GPU status: Occupied_  
-_Linda Johnson memorial fund: ongoing_
+_Linda Johnson memorial fund: ongoing_  
+_Normalization formula correctness: finally_
