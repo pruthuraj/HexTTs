@@ -76,6 +76,9 @@ device: cuda # Preferred training device (cuda or cpu).
 loss_weight_reconstruction: 1.0 # Weight for mel reconstruction loss component.
 loss_weight_kl: 0.1 # Weight for KL divergence loss component.
 loss_weight_duration: 0.1 # Weight for duration prediction loss component.
+loss_weight_pre_postnet: 0.5 # Weight for pre-PostNet decoder mel loss (dual supervision).
+loss_weight_stft: 0.1 # Weight for multi-scale spectral mel loss.
+kl_warmup_steps: 10000 # Steps to ramp KL weight from 0 → loss_weight_kl (0 = no warmup).
 
 # Token-level and sum-level duration supervision balance.
 duration_token_alpha: 1.0 # Weight for token-level duration supervision term.
@@ -103,7 +106,7 @@ num_samples_to_generate: 3 # Number of validation samples to synthesize when sam
 # ============================================================
 
 use_amp: false # Enable mixed precision training when true.
-warmup_steps: 0 # LR warmup steps (0 disables warmup).
+warmup_steps: 1000 # LR warmup steps (0 disables warmup).
 max_seq_length: 300 # Maximum mel frame length kept per training sample.
 seed: 42 # Random seed for reproducibility.
 
@@ -122,6 +125,7 @@ inference_steps: 1 # Inference refinement steps (reserved for iterative decoders
 
 # >1.0 slows speech down; tuned default for current checkpoint behavior.
 inference_duration_scale: 4.0 # Duration multiplier at inference (>1 slower speech, <1 faster).
+inference_noise_scale: 0.3 # Std-dev of Gaussian noise added to latent at inference.
 
 # ============================================================
 # DATA PIPELINE

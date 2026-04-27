@@ -235,39 +235,38 @@ class PosteriorEncoder(nn.Module):
 class Decoder(nn.Module):
     """Decodes latent codes to mel-spectrogram"""
     
-    def __init__(self, latent_dim: int, hidden_size: int, mel_channels: int, num_layers: int):
+    def __init__(self, latent_dim: int, hidden_size: int, mel_channels: int, num_layers: int,
+                 num_heads: int = 2, kernel_size: int = 3, dropout: float = 0.1):
         super().__init__()
-        
+
         # Initial projection
         self.projection = nn.Linear(latent_dim, hidden_size)
-        
+
         # Transformer decoder blocks
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(hidden_size, num_heads=2, kernel_size=3, dropout=0.1)
+            TransformerBlock(hidden_size, num_heads=num_heads, kernel_size=kernel_size, dropout=dropout)
             for _ in range(num_layers)
         ])
         
         # Output layer
         self.output = nn.Linear(hidden_size, mel_channels)
     
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
+    def forward(self, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             z: latent codes (batch_size, time_steps, latent_dim)
+            mask: key_padding_mask (batch_size, time_steps), True = ignore position
         Returns:
             mel-spectrogram (batch_size, mel_channels, time_steps)
         """
         x = self.projection(z)
         residual = x
 
-        # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x)
+            x = block(x, mask=mask)
 
-        # Residual skip helps preserve coarse latent structure
         x = x + residual
 
-        # Output mel-spectrogram
         mel = self.output(x)
         mel = torch.tanh(mel)
         mel = mel.transpose(1, 2)
@@ -415,7 +414,10 @@ class VITS(nn.Module):
             latent_dim=config['latent_dim'],
             hidden_size=config['decoder_hidden_size'],
             mel_channels=config['n_mel_channels'],
-            num_layers=config['decoder_num_layers']
+            num_layers=config['decoder_num_layers'],
+            num_heads=config.get('decoder_num_heads', 2),
+            kernel_size=config.get('decoder_kernel_size', 3),
+            dropout=config.get('decoder_dropout', 0.1),
         )
         
         # New v0.4.3: PostNet for mel-spectrogram refinement
@@ -425,61 +427,65 @@ class VITS(nn.Module):
         self.prior_proj = nn.Linear(config["encoder_hidden_size"], config["latent_dim"])
     
     def forward(self, phonemes: torch.Tensor, mel_spec: Optional[torch.Tensor] = None,
-                lengths: Optional[torch.Tensor] = None) -> dict:
+                lengths: Optional[torch.Tensor] = None,
+                mel_lengths: Optional[torch.Tensor] = None) -> dict:
         """
-        Forward pass for training
-        
+        Forward pass for training.
+
         Args:
             phonemes: (batch_size, seq_len) phoneme indices
             mel_spec: (batch_size, mel_channels, time_steps) ground truth mel-spec (training)
-            lengths: (batch_size,) sequence lengths
-        
+            lengths: (batch_size,) phoneme sequence lengths
+            mel_lengths: (batch_size,) mel frame lengths for decoder masking
         Returns:
-            dict with:
-                - predicted_mel: predicted mel-spectrogram
-                - duration: predicted duration
-                - z, mu, logvar: latent variables (training only)
+            dict with predicted_mel, decoder_mel (pre-PostNet), duration, z, mu, logvar
         """
-        
         # Text Encoder: Phonemes → Embeddings
-        encoder_out = self.encoder(phonemes, lengths=lengths)  # (batch_size, seq_len, hidden)
-        
+        encoder_out = self.encoder(phonemes, lengths=lengths)
+
         # Duration Predictor
-        duration = self.duration_predictor(encoder_out)  # (batch_size, seq_len, 1)
-        
-        # Length Regulator (Expand by duration)
-        expanded = self._length_regulate(encoder_out, duration)  # (batch_size, total_len, hidden)
-        
-        # NEW: text-conditioned latent prior
-        prior_latent = self.prior_proj(expanded)  # (batch_size, total_len, latent_dim)
-        
-        # Get latent codes from posterior encoder during training, sample from prior during inference
+        duration = self.duration_predictor(encoder_out)
+
+        # Pre-compute regulated lengths for inference decoder mask
+        dur_int = torch.round(duration.squeeze(-1)).long().clamp(min=1, max=20)
+        regulated_lengths = dur_int.sum(dim=1)
+
+        # Length Regulator
+        expanded = self._length_regulate(encoder_out, duration)
+
+        # Text-conditioned latent prior
+        prior_latent = self.prior_proj(expanded)
+
         if mel_spec is not None and self.training:
-            # Training: use posterior encoder
+            # Training: posterior encoder provides actual speech information
             z_post, mu, logvar = self.posterior_encoder(mel_spec)
-
-            # match text prior length to mel length
             prior_latent = self._match_time_length(prior_latent, z_post.size(1))
-
-            # combine posterior info with text-conditioned prior
             z = z_post + prior_latent
+            # Decoder mask from ground-truth mel lengths (prevents padding cross-attention)
+            if mel_lengths is not None:
+                max_len = z.size(1)
+                decoder_mask = torch.arange(max_len, device=z.device).unsqueeze(0) >= mel_lengths.unsqueeze(1)
+            else:
+                decoder_mask = None
         else:
-            # inference: use text prior + small noise instead of pure random latent
-            noise = torch.randn_like(prior_latent) * 0.3
-            z = prior_latent + noise
+            noise_scale = self.config.get('inference_noise_scale', 0.3)
+            z = prior_latent + torch.randn_like(prior_latent) * noise_scale
             mu, logvar = None, None
-        
+            # Decoder mask from regulated lengths
+            max_len = z.size(1)
+            decoder_mask = torch.arange(max_len, device=z.device).unsqueeze(0) >= regulated_lengths.unsqueeze(1)
+
         # Decoder: Latent → Mel-spectrogram
-        predicted_mel = self.decoder(z)  # (batch_size, mel_channels, time_steps)
-        # New v0.4.3: Apply PostNet for mel-spectrogram refinement
-        predicted_mel = predicted_mel + self.postnet(predicted_mel)
+        decoder_mel = self.decoder(z, mask=decoder_mask)
+        predicted_mel = decoder_mel + self.postnet(decoder_mel)
 
         return {
             'predicted_mel': predicted_mel,
+            'decoder_mel': decoder_mel,
             'duration': duration,
             'z': z,
             'mu': mu,
-            'logvar': logvar
+            'logvar': logvar,
         }
     
     # Inference method for generating mel-spectrogram from phonemes
@@ -502,35 +508,32 @@ class VITS(nn.Module):
         Returns:
             predicted_mel: Mel-spectrogram tensor (batch_size, mel_channels, time_steps)
         """
-        # Step 1: Text Encoder - Convert phoneme indices to contextual embeddings
+        # Step 1: Text Encoder
         encoder_out = self.encoder(phonemes, lengths=lengths)
 
-        # Step 2: Duration Predictor - Predict frame-level duration for each phoneme
-        # Clamp raw predicted durations to a valid range before applying duration_scale
-        # so speech-rate control is not aggressively truncated by the ceiling.
+        # Step 2: Duration Predictor (clamp before scaling for stable speech-rate control)
         duration = self.duration_predictor(encoder_out)
         duration = torch.clamp(duration, min=1.0, max=20.0)
-        # Scale duration by duration_scale parameter (>1.0 = slower, <1.0 = faster)
         duration = duration * duration_scale
 
-        # Step 3: Length Regulator - Expand encoder output by repeating frames according to duration
-        # This aligns the text representation with the expected mel-spectrogram length
+        # Step 3: Pre-compute regulated lengths for decoder mask
+        dur_int = torch.round(duration.squeeze(-1)).long().clamp(min=1, max=20)
+        regulated_lengths = dur_int.sum(dim=1)
+
+        # Step 4: Length Regulator
         expanded = self._length_regulate(encoder_out, duration)
 
-        # Step 4: Project expanded text features into latent space as a prior
-        # This text-conditioned prior guides the decoder towards phonetically meaningful representations
+        # Step 5: Text-conditioned latent prior + noise
         prior_latent = self.prior_proj(expanded)
+        z = prior_latent + torch.randn_like(prior_latent) * noise_scale
 
-        # Step 5: Add stochastic noise to the latent code
-        # This provides variability in the generated speech while maintaining phonetic content
-        noise = torch.randn_like(prior_latent) * noise_scale
-        z = prior_latent + noise
+        # Step 6: Decoder mask from regulated lengths (keeps padding out of attention)
+        max_len = z.size(1)
+        decoder_mask = torch.arange(max_len, device=z.device).unsqueeze(0) >= regulated_lengths.unsqueeze(1)
 
-        # Step 6: Decode latent code to mel-spectrogram
-        # z contains both text information (prior) and stochastic variation (noise)
-        predicted_mel = self.decoder(z)
-        # New v0.4.3: Apply PostNet for mel-spectrogram refinement
-        predicted_mel = predicted_mel + self.postnet(predicted_mel)
+        # Step 7: Decode → PostNet refinement
+        decoder_mel = self.decoder(z, mask=decoder_mask)
+        predicted_mel = decoder_mel + self.postnet(decoder_mel)
 
         return predicted_mel
 
@@ -552,36 +555,27 @@ class VITS(nn.Module):
     @staticmethod
     def _length_regulate(x: torch.Tensor, duration: torch.Tensor) -> torch.Tensor:
         """
-        Expand sequence by repeating frames according to predicted duration
-        
+        Expand sequence by repeating frames according to predicted duration.
+
         Args:
             x: (batch_size, seq_len, hidden_size)
             duration: (batch_size, seq_len, 1) predicted durations
-        
         Returns:
             expanded: (batch_size, total_len, hidden_size)
         """
         batch_size, seq_len, hidden_size = x.size()
-        
-        # Round duration to nearest integer
-        duration = torch.round(duration.squeeze(-1)).long()  # (batch_size, seq_len)
-        
+        duration = torch.round(duration.squeeze(-1)).long().clamp(min=1, max=20)  # (B, S)
+
         outputs = []
         for i in range(batch_size):
-            output = []
-            for j in range(seq_len):
-                # Repeat each frame according to predicted duration
-                repeat_count = min(20, max(1, int(duration[i, j].item())))
-                output.append(x[i, j].unsqueeze(0).repeat(repeat_count, 1))
-            outputs.append(torch.cat(output, dim=0))
-        
-        # Pad to same length in batch
-        max_len = max([o.size(0) for o in outputs])
+            # repeat_interleave is a single vectorized CUDA op; avoids per-frame .item() syncs
+            outputs.append(torch.repeat_interleave(x[i], duration[i], dim=0))
+
+        max_len = max(o.size(0) for o in outputs)
         padded = torch.zeros(batch_size, max_len, hidden_size, device=x.device)
-        
-        for i, output in enumerate(outputs):
-            padded[i, :output.size(0), :] = output
-        
+        for i, out in enumerate(outputs):
+            padded[i, :out.size(0)] = out
+
         return padded
 
 

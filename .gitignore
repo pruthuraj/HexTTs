@@ -1,5 +1,8 @@
 # Ignore files of log , checkpoints, and data
 
+.claude/*
+claude.md
+
 logs/*
 oldLog/*
 !logs/.gitkeep

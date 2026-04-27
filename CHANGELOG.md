@@ -9,6 +9,126 @@ Migration note (v0.5.x): older entries may mention legacy files such as `train_v
 
 ---
 
+## [v0.5.1] - 2026-04-27
+
+### _"The Model Can Finally Feel Shame About Its Mistakes"_
+
+### Summary
+
+Six training quality improvements in one patch. The model was previously optimizing with the
+enthusiasm of a student who never checks their answers. Now it gets feedback at multiple levels,
+its attention mechanism stops hallucinating over padding, and the learning rate no longer sprints
+off a cliff on step one. Whether any of this makes the audio sound better is left as an exercise
+for your ears and your TensorBoard dashboard.
+
+### Added
+
+- **KL Annealing** — `configs/base.yaml`, `hextts/training/trainer.py`
+  - New config key: `kl_warmup_steps: 10000`
+  - KL weight now ramps linearly from 0 → `loss_weight_kl` over the first 10k steps
+  - Previously, KL pressure was applied from step 1, which encouraged the posterior encoder
+    to give up immediately and output `N(0,1)` regardless of the input mel
+  - Technically this is called posterior collapse. Emotionally it is called the model lying to you.
+  - New TensorBoard scalar `train/kl_anneal_factor` so you can watch the ramp in real time
+    and feel like you're in control of something
+
+- **Dual Mel Supervision (Pre + Post PostNet)** — `hextts/models/vits_impl.py`, `hextts/training/trainer.py`
+  - New config key: `loss_weight_pre_postnet: 0.5`
+  - `forward()` now returns `decoder_mel` (pre-PostNet) alongside `predicted_mel` (post-PostNet)
+  - Both are supervised with L1 loss against the ground truth mel
+  - Previously, PostNet had no idea what it was supposed to fix — it just received gradient from
+    the final combined output and had to figure it out telepathically
+  - Now the decoder is forced to produce a usable coarse mel independently, and PostNet learns
+    an actual residual instead of compensating for everything simultaneously
+  - Logged as `train/pre_postnet_loss`
+
+- **Multi-Scale Spectral Mel Loss** — `hextts/training/losses.py`, `hextts/training/trainer.py`
+  - New config key: `loss_weight_stft: 0.1`
+  - `MultiScaleMelLoss` computes L1 at 1×, 2×, and 4× temporal downsampling of the mel
+  - Plain per-frame L1 loss is blind to coarse temporal structure — a predicted mel that is
+    shifted by a few frames can score perfectly fine while sounding completely wrong
+  - Multi-scale supervision forces the model to be correct at multiple time granularities,
+    not just locally
+  - Logged as `train/ms_mel_loss`
+
+- **LR Warmup** — `hextts/training/trainer.py`, `configs/base.yaml`
+  - `warmup_steps: 1000` — was in `base.yaml` but completely ignored by the trainer.
+    It was sitting there the whole time, doing nothing, like a fire extinguisher with no pin.
+  - LR now linearly ramps from ~0 → `learning_rate` over the first 1000 steps
+  - Main exponential scheduler is held back until warmup completes
+  - Transformer attention heads are sensitive to large gradient updates at initialization —
+    without warmup, early steps can permanently damage attention patterns before
+    the model has any idea what it is doing
+
+- **`inference_noise_scale` Wired to Config** — `hextts/models/vits_impl.py`, `configs/base.yaml`
+  - New config key: `inference_noise_scale: 0.3`
+  - Previously hardcoded as `* 0.3` in `vits_impl.py`, invisible to config, tunable by no one
+  - Now readable, overridable, and documented like a responsible hyperparameter
+  - Controls how much random variation is injected into the latent at inference time.
+    Higher = more expressive and unpredictable. Lower = more consistent and slightly robotic.
+    0.3 is the polite middle ground that nobody will complain about.
+
+- **Decoder Padding Masks** — `hextts/models/vits_impl.py`
+  - `Decoder.forward()` now accepts a `mask` parameter passed down to each `TransformerBlock`
+  - Training: mask built from ground-truth `mel_lengths` (actual frame counts per batch item)
+  - Inference: mask built from `regulated_lengths` (sum of predicted per-phoneme durations)
+  - Previously, padding positions at the end of shorter batch items were attending to — and being
+    attended to by — real tokens in every decoder layer on every training step.
+    The model learned this. We are sorry.
+
+### Improved
+
+- **`_length_regulate` Vectorization** — `hextts/models/vits_impl.py`
+  - Replaced nested Python for-loop (with per-frame `.item()` CPU-GPU sync) with
+    `torch.repeat_interleave`, a single vectorized CUDA kernel per batch item
+  - The old code triggered approximately 600 CPU-GPU round-trips per forward pass on a
+    typical sequence. On Windows, where CUDA sync overhead is generously high, this was
+    quietly degrading throughput on every single training step. It had been doing this
+    the entire time. Nobody asked how it was doing. Nobody checked.
+
+- **Decoder Config Params** — `hextts/models/vits_impl.py`
+  - `Decoder.__init__` now reads `num_heads`, `kernel_size`, and `dropout` from config
+    instead of hardcoded values (`2`, `3`, `0.1`)
+  - Previously, changing `decoder_num_heads` in `base.yaml` had exactly zero effect on anything.
+    The config key existed. It was validated. It was logged. It was silently ignored.
+  - Checkpoint-safe: defaults match the old hardcoded values, so existing checkpoints load cleanly
+
+### New TensorBoard Scalars
+
+| Scalar | What It Tells You |
+|--------|------------------|
+| `train/kl_anneal_factor` | KL ramp progress (0.0 → 1.0 over `kl_warmup_steps`) |
+| `train/pre_postnet_loss` | How bad the decoder mel is before PostNet covers for it |
+| `train/ms_mel_loss` | Multi-scale temporal alignment quality |
+
+### Compatibility
+
+- No checkpoint format changes. All improvements are training-time only.
+- Existing checkpoints resume correctly. `global_step` is restored from checkpoint, so
+  the KL annealing ramp knows how far along it already is and won't start over.
+- `VITS.forward()` gains an optional `mel_lengths` parameter (default `None`).
+  Callers that omit it train without decoder masks — identical to previous behaviour.
+  The trainer now passes it.
+
+### Known Risks
+
+- If `kl_warmup_steps` is too short relative to total training budget, KL pressure ramps up
+  while the decoder is still learning what a mel spectrogram is supposed to look like.
+  If `train/kl_loss` spikes after the ramp completes, try `loss_weight_kl: 0.05`
+  or extend `kl_warmup_steps: 20000`.
+
+### Developer Status
+
+```
+New losses added         : 3
+Hardcoded values removed : 2
+CPU-GPU syncs eliminated : ~600 per forward pass
+Regrets                  : mild
+GPU fan RPM              : unchanged (already at max, as always)
+```
+
+---
+
 ## [v0.5.0] - 2026-04-15
 
 ### Summary

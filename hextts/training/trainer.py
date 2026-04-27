@@ -30,6 +30,7 @@ from hextts.models.checkpointing import (
     save_checkpoint as save_shared_checkpoint,
     validate_checkpoint_compatibility,
 )
+from hextts.training.losses import MultiScaleMelLoss
 
 # Sample texts for validation generation (can be customized)
 SAMPLE_TEXTS = [
@@ -78,6 +79,21 @@ class VITSTrainer:
             )
         else:
             self.scheduler = None
+
+        # Per-step LR warmup (runs independently of the per-epoch main scheduler)
+        self.warmup_total_steps = int(config.get('warmup_steps', 0))
+        if self.warmup_total_steps > 0:
+            self.warmup_scheduler = optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=1.0 / self.warmup_total_steps,
+                end_factor=1.0,
+                total_iters=self.warmup_total_steps,
+            )
+        else:
+            self.warmup_scheduler = None
+
+        # Multi-scale mel loss (no trainable params, created once)
+        self.ms_mel_loss = MultiScaleMelLoss(scales=(1, 2, 4))
         
         # AMP scaler (for mixed precision training)
         # Use new torch.amp.GradScaler API with device specification
@@ -153,31 +169,44 @@ class VITSTrainer:
         """
         
         predicted_mel = outputs['predicted_mel']
+        decoder_mel = outputs.get('decoder_mel')
         duration = outputs['duration'].squeeze(-1)
         mu = outputs['mu']
         logvar = outputs['logvar']
-        
-        # Match predicted mel time length to target mel time length
+
+        # Align predicted lengths to target mel length
         if predicted_mel.size(2) != mel_spec.size(2):
             predicted_mel = nn.functional.interpolate(
-                predicted_mel,
-                size=mel_spec.size(2),
-                mode="linear",
-                align_corners=False,
+                predicted_mel, size=mel_spec.size(2), mode="linear", align_corners=False,
             )
-        # Debug: print duration stats to verify they are reasonable    
-        # print("Duration mean:", duration.mean().item())
-        # print("Duration std:", duration.std().item())
-        # print("Target duration sum:", mel_lengths.float().mean().item())
-        
-        # 1. Reconstruction loss (L1 or MSE)
+        if decoder_mel is not None and decoder_mel.size(2) != mel_spec.size(2):
+            decoder_mel = nn.functional.interpolate(
+                decoder_mel, size=mel_spec.size(2), mode="linear", align_corners=False,
+            )
+
+        # 1. Reconstruction loss — post-PostNet (primary)
         recon_loss = nn.functional.l1_loss(predicted_mel, mel_spec, reduction='mean')
-        
-        # 2. KL divergence loss (for VAE component)
-        if mu is not None and logvar is not None:
-            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / mu.numel()
+
+        # 2. Pre-PostNet mel loss — teaches the decoder to produce a good coarse mel
+        #    independently of PostNet, giving PostNet a clear residual to learn.
+        if decoder_mel is not None:
+            pre_postnet_loss = nn.functional.l1_loss(decoder_mel, mel_spec, reduction='mean')
         else:
-            kl_loss = torch.tensor(0.0, device=predicted_mel.device)
+            pre_postnet_loss = predicted_mel.new_zeros(())
+
+        # 3. Multi-scale spectral loss — L1 at temporal resolutions 1×, 2×, 4×
+        ms_loss = self.ms_mel_loss(predicted_mel, mel_spec)
+
+        # 4. KL divergence with annealing — ramps from 0 to loss_weight_kl over
+        #    kl_warmup_steps to prevent posterior collapse in early training.
+        if mu is not None and logvar is not None:
+            kl_warmup = int(config.get('kl_warmup_steps', 0))
+            kl_anneal = min(1.0, self.global_step / max(1, kl_warmup)) if kl_warmup > 0 else 1.0
+            kl_raw = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / mu.numel()
+            kl_loss = kl_raw * kl_anneal
+        else:
+            kl_anneal = 0.0
+            kl_loss = predicted_mel.new_zeros(())
         
         # 3. Duration loss: token-level pseudo supervision + global sum supervision
         pred = duration
@@ -218,14 +247,19 @@ class VITSTrainer:
         # Weighted sum
         total_loss = (
             config['loss_weight_reconstruction'] * recon_loss +
+            config.get('loss_weight_pre_postnet', 0.5) * pre_postnet_loss +
+            config.get('loss_weight_stft', 0.1) * ms_loss +
             config['loss_weight_kl'] * kl_loss +
             config['loss_weight_duration'] * duration_loss
         )
-        
+
         return {
             'total_loss': total_loss,
             'recon_loss': recon_loss.item(),
+            'pre_postnet_loss': pre_postnet_loss.item() if torch.is_tensor(pre_postnet_loss) else float(pre_postnet_loss),
+            'ms_mel_loss': ms_loss.item(),
             'kl_loss': kl_loss.item(),
+            'kl_anneal_factor': kl_anneal,
             'duration_loss': duration_loss.item(),
             'token_duration_loss': token_loss.item(),
             'sum_duration_loss': sum_loss.item(),
@@ -301,10 +335,9 @@ class VITSTrainer:
                     outputs = self.model(
                         phoneme_ids,
                         mel_spec=mel_spec,
-                        lengths=phoneme_lengths
+                        lengths=phoneme_lengths,
+                        mel_lengths=mel_lengths,
                     )
-                    # Compute loss with optional NaN protection
-                    # loss_dict = self.compute_loss(outputs, mel_spec, self.config)
                     loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
 
                     if batch_idx == 0:
@@ -353,7 +386,11 @@ class VITSTrainer:
                     self.scaler.update()
                 else:
                     self.optimizer.step()
-                
+
+                # Per-step LR warmup (only active during warmup phase)
+                if self.warmup_scheduler is not None and self.global_step < self.warmup_total_steps:
+                    self.warmup_scheduler.step()
+
                 # Log
                 total_loss += loss.item()
                 valid_batches += 1
@@ -371,7 +408,10 @@ class VITSTrainer:
                     # TensorBoard
                     self.writer.add_scalar('train/loss', avg_loss, self.global_step)
                     self.writer.add_scalar('train/recon_loss', loss_dict['recon_loss'], self.global_step)
+                    self.writer.add_scalar('train/pre_postnet_loss', loss_dict['pre_postnet_loss'], self.global_step)
+                    self.writer.add_scalar('train/ms_mel_loss', loss_dict['ms_mel_loss'], self.global_step)
                     self.writer.add_scalar('train/kl_loss', loss_dict['kl_loss'], self.global_step)
+                    self.writer.add_scalar('train/kl_anneal_factor', loss_dict['kl_anneal_factor'], self.global_step)
                     self.writer.add_scalar('train/duration_loss', loss_dict['duration_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_token_loss', loss_dict['token_duration_loss'], self.global_step)
                     self.writer.add_scalar('train/duration_sum_loss', loss_dict['sum_duration_loss'], self.global_step)
@@ -437,6 +477,7 @@ class VITSTrainer:
                 phoneme_ids,
                 mel_spec=mel_spec,
                 lengths=phoneme_lengths,
+                mel_lengths=mel_lengths,
             )
 
             loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
@@ -647,6 +688,7 @@ class VITSTrainer:
                         epoch=epoch + 1,
                         device=self.device.type,
                         sample_rate=self.config.get("sample_rate", 22050),
+                        config=self.config,
                     )
                     # Log generated samples to TensorBoard
                     self.log_audio_samples(epoch + 1)
@@ -654,8 +696,8 @@ class VITSTrainer:
                 except Exception as e:
                     print(f"Sample generation failed: {e}")
             
-            # Learning rate schedule
-            if self.scheduler:
+            # Learning rate schedule (epoch-based; held back until warmup finishes)
+            if self.scheduler and self.global_step >= self.warmup_total_steps:
                 self.scheduler.step()
             
             # Early stopping
