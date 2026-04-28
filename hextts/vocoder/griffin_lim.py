@@ -14,15 +14,25 @@ def mel_to_audio(
     win_length: int = 1024,
     sample_rate: int = 22050,
     n_fft: int = 1024,
+    fmin: float = 0.0,
+    fmax: float = 8000.0,
 ) -> np.ndarray:
-    """Convert magnitude/mel-like spectrogram input to waveform with Griffin-Lim.
+    """Convert a dB-scale mel spectrogram to waveform with Griffin-Lim.
 
-    This is used as a fallback path when neural vocoder assets are unavailable.
+    Pipeline: dB → power → mel_to_stft (pseudo-inverse) → griffinlim.
+    Matches the Griffin-Lim fallback path in hextts/inference/pipeline.py.
     """
+    mel_power = np.power(10.0, mel_spec / 10.0)
+    linear = librosa.feature.inverse.mel_to_stft(
+        mel_power,
+        sr=sample_rate,
+        n_fft=n_fft,
+        fmin=fmin,
+        fmax=fmax,
+    )
     return librosa.griffinlim(
-        mel_spec,
+        linear,
         n_iter=n_iter,
         hop_length=hop_length,
         win_length=win_length,
-        n_fft=n_fft,
     ).astype(np.float32)

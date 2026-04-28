@@ -29,11 +29,13 @@ def generate_samples(
     # Extract audio processing params from config or use defaults
     if config is None:
         config = {}
-    
-    ref_level_db = config.get("ref_level_db", 20.0)
+
+    min_level_db = config.get("min_level_db", -100.0)
     mel_hop_length = config.get("mel_hop_length", 256)
     mel_win_length = config.get("mel_win_length", 1024)
     mel_n_fft = config.get("mel_n_fft", 1024)
+    mel_f_min = config.get("mel_f_min", 0.0)
+    mel_f_max = config.get("mel_f_max", 8000.0)
 
     for i, text in enumerate(texts, start=1):
         # Convert text into model input IDs using caller-provided tokenizer.
@@ -52,10 +54,11 @@ def generate_samples(
             warnings.warn(f"Skipping sample {i} at epoch {epoch}: mel-spectrogram contains NaN or Inf")
             continue
 
-        # Convert to numpy and denormalize
+        # Convert to numpy and denormalize.
+        # Inverse of training norm: norm = (mel_db - min_level_db) / -min_level_db
+        # → mel_db = norm * -min_level_db + min_level_db
         mel_spec_np = mel_spec.squeeze(0).cpu().numpy()  # (n_mels, time_steps)
-        mel_spec_np = mel_spec_np * -ref_level_db + ref_level_db
-        mel_spec_np = np.clip(mel_spec_np, a_min=-100, a_max=100)
+        mel_spec_np = mel_spec_np * (-min_level_db) + min_level_db
 
         # Convert mel-spectrogram to waveform using Griffin-Lim (no external vocoder needed)
         try:
@@ -66,6 +69,8 @@ def generate_samples(
                 win_length=mel_win_length,
                 sample_rate=sample_rate,
                 n_fft=mel_n_fft,
+                fmin=mel_f_min,
+                fmax=mel_f_max,
             )
             
             # Normalize audio to prevent clipping
