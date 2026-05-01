@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HexTTs Project Timeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    * {
+      font-family: 'Inter', sans-serif;
+    }
+
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1a1f3a 50%, #0f172a 100%);
+      background-attachment: fixed;
+    }
+
+    .glass {
+      backdrop-filter: blur(16px);
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(34, 211, 238, 0.1);
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .glass:hover {
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(34, 211, 238, 0.25);
+      box-shadow: 0 25px 50px rgba(34, 211, 238, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .chip-active {
+      background: linear-gradient(135deg, rgb(14, 116, 144), rgb(6, 182, 212));
+      color: white;
+      border-color: rgba(34, 211, 238, 0.5);
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+    }
+
+    .header-glow {
+      background: linear-gradient(135deg, #164e63 0%, #0c4a6e 50%, #0f172a 100%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header-glow::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -20%;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(34, 211, 238, 0.15) 0%, transparent 70%);
+      animation: floatGlow 12s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes floatGlow {
+
+      0%,
+      100% {
+        transform: translate(0, 0) scale(1);
+        opacity: 0.3;
+      }
+
+      50% {
+        transform: translate(60px, 40px) scale(1.15);
+        opacity: 0.5;
+      }
+    }
+
+    .timeline-card {
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(20, 33, 61, 0.6));
+      border: 1px solid rgba(34, 211, 238, 0.15);
+      border-radius: 1rem;
+    }
+
+    .timeline-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(34, 211, 238, 0.15) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+
+    .timeline-card:hover::before {
+      opacity: 1;
+    }
+
+    .timeline-card:hover {
+      border-color: rgba(34, 211, 238, 0.4);
+      box-shadow: 0 25px 50px rgba(34, 211, 238, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      transform: translateY(-6px);
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(20, 33, 61, 0.8));
+    }
+
+    .timeline-dot {
+      position: relative;
+      width: 1.25rem;
+      height: 1.25rem;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #06b6d4, #0ea5e9);
+      box-shadow: 0 0 30px rgba(34, 211, 238, 0.6), inset 0 0 15px rgba(34, 211, 238, 0.4);
+      animation: dotPulse 3s ease-in-out infinite;
+    }
+
+    @keyframes dotPulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 30px rgba(34, 211, 238, 0.6), inset 0 0 15px rgba(34, 211, 238, 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 50px rgba(34, 211, 238, 0.9), inset 0 0 20px rgba(34, 211, 238, 0.5);
+      }
+    }
+
+    .spine-gradient {
+      background: linear-gradient(180deg, rgba(34, 211, 238, 0.8) 0%, rgba(34, 211, 238, 0.4) 50%, rgba(34, 211, 238, 0) 100%);
+      box-shadow: 0 0 30px rgba(34, 211, 238, 0.4), inset 0 0 20px rgba(34, 211, 238, 0.2);
+    }
+
+    .button-shine {
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .button-shine::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+      transition: left 0.6s ease;
+    }
+
+    .button-shine:hover::before {
+      left: 100%;
+    }
+
+    .badge-patch {
+      background: linear-gradient(135deg, rgba(251, 146, 60, 0.25), rgba(249, 115, 22, 0.1));
+      border: 1px solid rgba(251, 146, 60, 0.4);
+      color: #fed7aa;
+      font-weight: 600;
+    }
+
+    .badge-release {
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.25), rgba(22, 163, 74, 0.1));
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      color: #bbf7d0;
+      font-weight: 600;
+    }
+
+    .section-heading {
+      background: linear-gradient(135deg, #06b6d4 0%, #0ea5e9 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .link-hover {
+      color: #06b6d4;
+      text-decoration: none;
+      position: relative;
+      transition: color 0.3s ease;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .link-hover::after {
+      content: '';
+      position: absolute;
+      bottom: -3px;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #06b6d4, #0ea5e9);
+      transition: width 0.3s ease;
+    }
+
+    .link-hover:hover {
+      color: #0ea5e9;
+    }
+
+    .link-hover:hover::after {
+      width: 100%;
+    }
+
+    .card-stagger {
+      animation: slideUpStagger 0.6s ease-out both;
+    }
+
+    @keyframes slideUpStagger {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+        filter: blur(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+        filter: blur(0);
+      }
+    }
+
+    h1 {
+      text-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    h2 {
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    h3 {
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+
+    .scroll-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      z-index: 50;
+      background: linear-gradient(90deg, #22d3ee, #06b6d4, #0ea5e9);
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.6);
+      transition: width 0.08s linear;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(22px);
+      transition: opacity 0.55s ease, transform 0.55s ease;
+      will-change: opacity, transform;
+    }
+
+    .reveal-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <div id="scrollProgressBar" class="scroll-progress"></div>
+  <div class="header-glow relative z-0">
+    <header class="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 relative z-10">
+      <p class="text-cyan-300 text-sm tracking-widest uppercase">HexTTs</p>
+      <h1 class="mt-3 text-4xl sm:text-5xl font-bold leading-tight">
+        Local TTS Engineering Log
+        <span class="block text-cyan-400">With Less Mystery, More Timeline</span>
+      </h1>
+      <p class="mt-5 max-w-3xl text-slate-300 text-lg">
+        This page tracks the evolution of HexTTs from "why is the model buzzing like an angry transformer"
+        to "okay, now it is at least a professional angry transformer."
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <button id="jumpLatestBtn"
+          class="rounded-md border border-cyan-400/60 bg-cyan-500/20 px-4 py-2 text-sm font-semibold hover:bg-cyan-500/35">
+          Jump To Latest Event
+        </button>
+        <a href="docs/index.md"
+          class="rounded-md border border-slate-500 px-4 py-2 text-sm font-semibold hover:bg-slate-800">Open Docs
+          Index</a>
+        <a href="docs/HexTTs_AI_Project_Document.docx"
+          class="rounded-md border border-slate-500 px-4 py-2 text-sm font-semibold hover:bg-slate-800">Open Portfolio
+          DOCX</a>
+      </div>
+    </header>
+  </div>
+
+  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pb-16">
+    <section class="reveal grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <article class="glass rounded-2xl p-6 shadow-lg shadow-cyan-950/10">
+        <h2 class="section-heading text-xl">What HexTTs Is</h2>
+        <p class="mt-3 text-slate-300 leading-7">
+          HexTTs is a local VITS-style text-to-speech research project. It covers the full path from raw LJSpeech data
+          to cleaned phoneme metadata, cached or raw dataloading, model training, checkpointing, inference, and waveform
+          evaluation.
+        </p>
+      </article>
+      <article class="glass rounded-2xl p-6 shadow-lg shadow-cyan-950/10">
+        <h2 class="section-heading text-xl">What The Timeline Shows</h2>
+        <p class="mt-3 text-slate-300 leading-7">
+          Each card is a patch or release milestone. Click a card to expand the explanation of what changed, why it
+          mattered, and where the canonical note lives. Release entries mark version tags; patch entries explain the
+          actual fix or workflow change behind the version.
+        </p>
+      </article>
+      <article class="glass rounded-2xl p-6 shadow-lg shadow-cyan-950/10">
+        <h2 class="section-heading text-xl">How To Read It</h2>
+        <p class="mt-3 text-slate-300 leading-7">
+          Cards alternate around a central vertical spine, matching the screenshot-style timeline layout. Use the
+          controls to expand or collapse all entries, or jump straight to the latest milestone. The page is
+          intentionally documentation-first, so the detail stays one click away instead of buried in a long changelog
+          wall.
+        </p>
+      </article>
+    </section>
+
+    <section class="reveal mt-10 grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+      <article class="glass rounded-2xl p-6">
+        <h2 class="section-heading text-xl">Project Flow</h2>
+        <p class="mt-2 text-slate-300 text-sm leading-6">From data prep to evaluation, the project is organized to make
+          failure modes visible instead of silent.</p>
+        <div class="mt-4 overflow-auto rounded-xl border border-slate-700 bg-slate-900/90 p-4">
+          <div class="mermaid">
+            flowchart TD
+            A["LJSpeech Raw Data"] --> B["Validation + Prep"]
+            B --> C["Phoneme Metadata"]
+            C --> D["Duration Targets"]
+            D --> E["Cached or Raw Data Loader"]
+            E --> F["VITS-style Training"]
+            F --> G["Checkpoints + Logs"]
+            G --> H["Inference Pipeline"]
+            H --> I{"Waveform Path"}
+            I --> J["Griffin-Lim"]
+            I --> K["HiFi-GAN"]
+            J --> L["Generated Audio"]
+            K --> L
+            L --> M["Objective Evaluation"]
+          </div>
+        </div>
+      </article>
+
+      <article class="glass rounded-2xl p-6">
+        <h2 class="section-heading text-xl">Timeline Controls</h2>
+        <p class="mt-2 text-slate-300 text-sm leading-6">Use the buttons to widen the narrative or jump straight to the
+          newest entry.</p>
+        <div class="mt-4 flex flex-wrap gap-3">
+          <button id="toggleDetailsBtn"
+            class="button-shine rounded-lg border border-cyan-400/60 bg-cyan-500/20 px-5 py-2.5 text-sm font-semibold hover:bg-cyan-500/40 hover:border-cyan-300/80 hover:shadow-lg hover:shadow-cyan-500/20 transition-all">
+            Expand All Details
+          </button>
+          <button id="jumpLatestBtn"
+            class="button-shine rounded-lg border border-slate-600/50 px-5 py-2.5 text-sm font-semibold hover:border-cyan-400/60 hover:shadow-lg hover:shadow-cyan-500/10 transition-all">
+            Jump To Latest Entry
+          </button>
+        </div>
+        <div
+          class="mt-5 rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/50 to-slate-950/70 p-4 text-sm text-slate-300 backdrop-blur-sm">
+          <p><strong class="text-cyan-300">Generated:</strong> <span id="generatedOnText">pending</span></p>
+          <p class="mt-1"><strong class="text-cyan-300">Sources:</strong> <span id="sourceSummaryText">pending</span>
+          </p>
+          <p class="mt-3 text-slate-400 leading-relaxed">
+            The timeline is sorted chronologically, with undated notes parked at the beginning. Patch entries expand
+            into implementation detail; release entries explain the version milestone that the patch fits into.
+          </p>
+        </div>
+      </article>
+    </section>
+
+    <section class="reveal mt-10">
+      <article class="glass rounded-2xl p-6">
+        <h2 class="section-heading text-2xl">Project Details</h2>
+        <p class="mt-3 text-slate-300 leading-7">
+          HexTTs is a local, end-to-end neural text-to-speech engineering project focused on practical model training,
+          reliability, and explainability rather than API-only demos.
+        </p>
+
+        <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="rounded-xl border border-slate-700/70 bg-slate-900/60 p-4">
+            <h3 class="text-lg font-semibold text-cyan-300">Core Objective</h3>
+            <p class="mt-2 text-slate-300 leading-7">
+              Build and document a reproducible VITS-style TTS workflow that runs on consumer hardware, then track every
+              major architectural and operational change in one timeline.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-slate-700/70 bg-slate-900/60 p-4">
+            <h3 class="text-lg font-semibold text-cyan-300">Technology Stack</h3>
+            <ul class="mt-2 space-y-2 text-slate-300">
+              <li>Python + PyTorch for model/training runtime</li>
+              <li>Librosa + torchaudio for audio processing and alignment</li>
+              <li>HiFi-GAN optional vocoder path for higher quality synthesis</li>
+              <li>Config-driven execution through YAML profiles</li>
+            </ul>
+          </div>
+
+          <div class="rounded-xl border border-slate-700/70 bg-slate-900/60 p-4">
+            <h3 class="text-lg font-semibold text-cyan-300">Dataset + Inputs</h3>
+            <ul class="mt-2 space-y-2 text-slate-300">
+              <li>Primary dataset: LJSpeech (`data/LJSpeech-1.1`)</li>
+              <li>Prepared metadata: `data/ljspeech_prepared`</li>
+              <li>Real phoneme duration targets: `data/ljspeech_prepared/durations`</li>
+              <li>Validation, preprocessing, and audit scripts included</li>
+            </ul>
+          </div>
+
+          <div class="rounded-xl border border-slate-700/70 bg-slate-900/60 p-4">
+            <h3 class="text-lg font-semibold text-cyan-300">Pipeline</h3>
+            <ol class="mt-2 space-y-2 text-slate-300 list-decimal pl-5">
+              <li>Validate and preprocess dataset</li>
+              <li>Generate phoneme metadata and duration targets</li>
+              <li>Train VITS-style model with checkpoints/logs</li>
+              <li>Run inference (Griffin-Lim or HiFi-GAN)</li>
+              <li>Evaluate waveform quality metrics</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="mt-6 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-4">
+          <h3 class="text-lg font-semibold text-cyan-200">Key Entrypoints</h3>
+          <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-cyan-100">
+            <code>scripts/prepare_data.py</code>
+            <code>scripts/precompute_features.py</code>
+            <code>scripts/train.py</code>
+            <code>scripts/infer.py</code>
+            <code>scripts/evaluate_tts_output.py</code>
+            <code>scripts/main_flow.py</code>
+          </div>
+        </div>
+
+        <div class="mt-5 text-slate-300 leading-7">
+          Current reality check: output quality is improving, but this is still an active research build. The project
+          prioritizes visible engineering decisions, diagnostics, and honest documentation over pretending everything is
+          magically solved.
+        </div>
+      </article>
+    </section>
+
+    <section class="reveal mt-10">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 class="text-2xl font-bold">Project Timeline</h2>
+          <p class="mt-1 text-sm text-slate-400">
+            Click any card to expand the explanation for that patch or release. The central line keeps the story in
+            order.
+          </p>
+        </div>
+        <p class="text-sm text-slate-400" id="eventCountText">0 entries</p>
+      </div>
+      <div class="relative mt-6">
+        <div
+          class="pointer-events-none absolute left-5 top-0 bottom-0 w-px spine-gradient md:left-1/2 md:-translate-x-1/2">
+        </div>
+        <div id="timelineRoot" class="space-y-6"></div>
+      </div>
+    </section>
+
+    <section class="reveal mt-12 glass rounded-2xl p-6">
+      <h2 class="section-heading text-xl">Useful Links</h2>
+      <ul class="mt-3 list-none pl-0 text-slate-300 space-y-2">
+        <li><a class="link-hover" href="README.md">→ README.md</a></li>
+        <li><a class="link-hover" href="readme.long.md">→ readme.long.md</a></li>
+        <li><a class="link-hover" href="docs/index.md">→ docs/index.md</a></li>
+        <li><a class="link-hover" href="CHANGELOG.md">→ CHANGELOG.md</a></li>
+        <li><a class="link-hover" href="docs/notes/PATCH_NOTES_v0.5.4.md">→ Latest Patch Notes</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="docs/timeline-data.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: "dark" });
+
+    let TIMELINE_EVENTS = [];
+    let GENERATED_META = { generatedOn: "pending", sourceSummary: "pending" };
+
+    const TIMELINE_STATE = {
+      expandedIds: new Set(["patch-v054"]),
+      expandAll: false
+    };
+
+    function normalizeDateForSort(value) {
+      return value || "0000-00-00";
+    }
+
+    function getEventDetail(event) {
+      if (event.summary && event.points) {
+        return {
+          summary: event.summary,
+          points: event.points,
+          impact: event.impact || ""
+        };
+      }
+      return {
+        summary: "This entry is part of the project's documented change history.",
+        points: [
+          "Open the source note for the canonical context.",
+          "The card is intentionally expandable so the page reads like a timeline, not a label list."
+        ],
+        impact: ""
+      };
+    }
+
+    function sortedTimelineEvents() {
+      return [...TIMELINE_EVENTS].sort((a, b) => normalizeDateForSort(a.date).localeCompare(normalizeDateForSort(b.date)));
+    }
+
+    function withEventId(event, index) {
+      if (event.id) {
+        return event;
+      }
+      const type = event.type || "event";
+      const base = event.version || event.displayDate || event.title || "item";
+      return { ...event, id: `${type}-${base}-${index}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-") };
+    }
+
+    function setControlButtonLabel() {
+      const toggleButton = document.getElementById("toggleDetailsBtn");
+      if (!toggleButton) return;
+      toggleButton.textContent = TIMELINE_STATE.expandAll ? "Collapse All Details" : "Expand All Details";
+    }
+
+    function renderTimeline() {
+      const root = document.getElementById("timelineRoot");
+      const events = sortedTimelineEvents();
+      root.innerHTML = "";
+      document.getElementById("eventCountText").textContent = `${events.length} entries`;
+
+      events.forEach((event, index) => {
+        const detail = getEventDetail(event);
+        const isExpanded = TIMELINE_STATE.expandAll || TIMELINE_STATE.expandedIds.has(event.id);
+        const isLeft = index % 2 === 0;
+        const cardSideClass = isLeft ? "md:col-start-1 md:pr-8" : "md:col-start-3 md:pl-8";
+        const spacerClass = isLeft ? "hidden md:block md:col-start-3" : "hidden md:block md:col-start-1";
+        const detailToggleLabel = isExpanded ? "Hide details" : "Show details";
+        const detailPanelClass = isExpanded ? "border-t border-slate-700/80 px-5 py-4 detail-expand" : "hidden border-t border-slate-700/80 px-5 py-4";
+
+        const item = document.createElement("article");
+        item.className = "relative grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] card-stagger";
+        item.style.animationDelay = (index * 0.08) + "s";
+        item.innerHTML = `
+            <div class="relative z-10 pl-11 md:pl-0 ${cardSideClass}" data-event-card="${event.id}">
+              <div class="timeline-card overflow-hidden">
+                <button type="button" class="w-full text-left px-5 py-4 hover:bg-white/5 transition" data-toggle-id="${event.id}">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full px-3 py-1 text-xs font-semibold ${event.type === "patch" ? "badge-patch" : "badge-release"}">${event.type}</span>
+                    <span class="text-sm text-slate-300">${event.displayDate}</span>
+                    <span class="text-sm text-slate-500">${event.version || "no version"}</span>
+                  </div>
+                  <h3 class="mt-3 text-lg font-semibold text-slate-50">${event.title}</h3>
+                  <p class="mt-2 text-sm leading-6 text-slate-300">${detail.summary}</p>
+                  <div class="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-[0.18em] text-slate-400">
+                    <span>${detailToggleLabel}</span>
+                    <span>Source: ${event.sourceFile}</span>
+                  </div>
+                </button>
+                <div class="${detailPanelClass}" data-detail-panel="${event.id}">
+                  <p class="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">Why this entry matters</p>
+                  <ul class="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+                    ${detail.points.map((point) => `<li class="flex gap-3"><span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300"></span><span>${point}</span></li>`).join("")}
+                  </ul>
+                  ${detail.impact ? `<div class="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100">${detail.impact}</div>` : ""}
+                  <div class="mt-4 flex flex-wrap items-center gap-3 text-sm">
+                    <a class="text-cyan-300 hover:underline" href="${event.sourceFile}">Open source note</a>
+                    <span class="text-slate-500">${event.sourceFile}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="relative hidden items-center justify-center md:col-start-2 md:flex">
+              <span class="timeline-dot mt-6"></span>
+            </div>
+            <div class="${spacerClass}"></div>
+          `;
+        root.appendChild(item);
+      });
+
+      root.querySelectorAll("[data-toggle-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const eventId = button.dataset.toggleId;
+          if (TIMELINE_STATE.expandAll) {
+            TIMELINE_STATE.expandAll = false;
+            setControlButtonLabel();
+          }
+          if (TIMELINE_STATE.expandedIds.has(eventId)) {
+            TIMELINE_STATE.expandedIds.delete(eventId);
+          } else {
+            TIMELINE_STATE.expandedIds.add(eventId);
+          }
+          renderTimeline();
+        });
+      });
+    }
+
+    function jumpToLatest() {
+      const latest = sortedTimelineEvents().at(-1);
+      if (!latest) return;
+      TIMELINE_STATE.expandAll = false;
+      TIMELINE_STATE.expandedIds = new Set([latest.id]);
+      setControlButtonLabel();
+      renderTimeline();
+      const target = document.querySelector(`[data-event-card="${latest.id}"]`);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+
+    function attachControls() {
+      document.getElementById("toggleDetailsBtn").addEventListener("click", () => {
+        TIMELINE_STATE.expandAll = !TIMELINE_STATE.expandAll;
+        if (TIMELINE_STATE.expandAll) {
+          TIMELINE_STATE.expandedIds = new Set(TIMELINE_EVENTS.map((event) => event.id));
+        }
+        setControlButtonLabel();
+        renderTimeline();
+      });
+
+      document.querySelectorAll("#jumpLatestBtn").forEach((button) => {
+        button.addEventListener("click", jumpToLatest);
+      });
+    }
+
+    function setupScrollEffects() {
+      const progressBar = document.getElementById("scrollProgressBar");
+      const updateProgress = () => {
+        const doc = document.documentElement;
+        const scrollTop = doc.scrollTop || document.body.scrollTop;
+        const maxScroll = Math.max(doc.scrollHeight - doc.clientHeight, 1);
+        const ratio = Math.min(100, Math.max(0, (scrollTop / maxScroll) * 100));
+        progressBar.style.width = ratio + "%";
+      };
+
+      window.addEventListener("scroll", updateProgress, { passive: true });
+      updateProgress();
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("reveal-visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.12, rootMargin: "0px 0px -10% 0px" }
+      );
+
+      document.querySelectorAll(".reveal, .card-stagger").forEach((node) => observer.observe(node));
+    }
+
+    function initializeTimeline() {
+      const payload = window.TIMELINE_DATA;
+      if (payload && Array.isArray(payload.events)) {
+        TIMELINE_EVENTS = payload.events.map(withEventId);
+        GENERATED_META = payload.meta || GENERATED_META;
+      } else {
+        console.error("Invalid or missing docs/timeline-data.js payload");
+        TIMELINE_EVENTS = [];
+        GENERATED_META = {
+          generatedOn: "failed to load",
+          sourceSummary: "docs/timeline-data.js missing or invalid"
+        };
+      }
+      document.getElementById("generatedOnText").textContent = GENERATED_META.generatedOn || "pending";
+      document.getElementById("sourceSummaryText").textContent = GENERATED_META.sourceSummary || "pending";
+      attachControls();
+      setControlButtonLabel();
+      renderTimeline();
+      setupScrollEffects();
+    }
+
+    initializeTimeline();
+  </script>
+</body>
+
+</html>

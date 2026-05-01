@@ -102,6 +102,28 @@ Moral of the story                 : catch exceptions, log them, move on
 - **Config-compatible.** The `duration_dir` key is optional; if missing or empty, trainer falls back to pseudo-uniform durations.
 - **Backward-compatible.** Script runs on CPU if CUDA unavailable; defaults are conservative.
 
+### Documentation Addendum (v0.5.4)
+
+The code path got real duration targets. The docs path got real structure.
+
+- Added documentation index and deep-dive docs:
+  - `docs/index.md`
+  - `docs/project-rationale.md`
+  - `docs/system-flow.md`
+  - `docs/data-pipeline.md`
+  - `docs/model-training.md`
+  - `docs/inference-evaluation.md`
+  - `docs/operations-troubleshooting.md`
+- Rewrote summary pages:
+  - `docs/architecture.md`
+  - `docs/training.md`
+  - `docs/inference.md`
+  - `docs/troubleshooting.md`
+- Added Mermaid diagrams for system flow and architecture internals.
+- Added portfolio-ready document artifact: `docs/HexTTs_AI_Project_Document.docx`.
+
+No runtime behavior changed in this addendum. This is a documentation-only update.
+
 ---
 
 ## [v0.5.3] - 2026-04-28

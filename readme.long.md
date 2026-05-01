@@ -1,6 +1,6 @@
 # HexTTs: The Robot That Finally Learned to Speak
 
-_v0.5.0_
+_v0.5.4_
 
 ### _"Because Your GPU Wasn't Hot Enough Yet"_
 
@@ -26,17 +26,28 @@ _v0.5.0_
 - [Buzz Metric](#buzz-metric-spectral-flatness)
 - [A/B Comparison](#quick-ab-griffin-lim-vs-hifi-gan)
 - [Continuation Test](#continuation-test-3-epoch-automation)
+- [Docs Map](#docs-map-where-the-sane-documentation-now-lives)
 - [Q&A](#qa-will-you-answer-my-questions)
 
 ---
 
-## Patch Notes (v0.5.0)
+## Patch Notes (v0.5.4)
 
 ### What's New
 
-- **Docs/runtime alignment pass completed**: long-form guidance now matches active wrappers and config profiles.
-- **Package-first messaging clarified**: `hextts/` modules are now treated as primary internals, with `scripts/` as thin CLI wrappers.
-- **Workflow compatibility retained**: current `scripts/train.py` and `scripts/infer.py` command paths remain stable.
+- **Real phoneme duration targets are fully live**: `12,884 / 12,884` aligned duration files generated.
+- **All config profiles now point at real durations**: base, debug, sanity, continuation.
+- **Documentation got rebuilt into an actual system**:
+  - `docs/index.md` is now the entrypoint
+  - Deep dives now exist for flow, data, training, inference, and operations
+  - Mermaid diagrams were added to system/architecture/model docs
+- **Portfolio document shipped**: `docs/HexTTs_AI_Project_Document.docx`
+- **No architecture breakage from this docs refresh**: existing v0.5.3 checkpoints stay valid for v0.5.4 runtime.
+
+### Real Talk Result
+
+The model now has real duration supervision, and the humans now have real documentation.
+One of these two groups has historically needed more emotional support. We will not say which.
 
 ### Previous Highlights (v0.4.7)
 
@@ -49,10 +60,30 @@ _v0.5.0_
 - **Duration debug checks added**: optional `duration_debug_checks` prints target/pred vectors and sums for one train/val sample.
 - **Continuation report export added**: `--report-file` writes training snapshots + full eval report + final summary to text.
 
-### Real Talk Result
+---
 
-In current tests, the restored hybrid duration path produced stable timing again (`~1.8576 s`) with clean waveform metrics (`ZCR ~0.115`, `flatness ~0.016`).
-Translation: less metallic mosquito energy, realistic timing, and no duration collapse drama.
+## Docs Map (Where The Sane Documentation Now Lives)
+
+Start here:
+
+```text
+docs/index.md
+```
+
+Then follow:
+
+- `docs/project-rationale.md` for what/why and constraints
+- `docs/system-flow.md` for end-to-end pipeline flow
+- `docs/data-pipeline.md` for dataset and cache contracts
+- `docs/model-training.md` for architecture/loss/stability detail
+- `docs/inference-evaluation.md` for synthesis + metrics
+- `docs/operations-troubleshooting.md` for failure handling
+
+If you prefer polished "show this to a recruiter in one file" format:
+
+```text
+docs/HexTTs_AI_Project_Document.docx
+```
 
 ---
 

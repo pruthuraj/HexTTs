@@ -251,9 +251,15 @@ This makes HexTTs useful not only as a model implementation, but also as a debug
 
 ## Documentation
 
-- `readme.long.md` - full long-form version with deeper explanations, workflow detail, and project personality
+- `docs/index.md` - A-to-Z documentation entrypoint
+- `docs/project-rationale.md` - what/why, goals, constraints, and limitations
+- `docs/system-flow.md` - end-to-end pipeline flow
+- `docs/model-training.md` - architecture, losses, checkpoints, stability guardrails
+- `docs/inference-evaluation.md` - inference paths and objective metrics
+- `docs/operations-troubleshooting.md` - operational diagnostics and failure handling
+- `docs/HexTTs_AI_Project_Document.docx` - portfolio-ready project summary
+- `readme.long.md` - full long-form version with deeper explanations and project personality
 - `PROJECT_DESCRIPTION.md` - broader technical description
-- `docs/` - supporting documentation
 - `diagram/` - visual architecture and flow references
 
 ---

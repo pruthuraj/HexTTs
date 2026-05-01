@@ -1,7 +1,7 @@
 # HexTTs v0.5.4 Patch Notes
 
 **Release Date:** 2026-05-01  
-**Headline:** Real phoneme-level duration targets are now live. The duration predictor can finally learn.
+**Headline:** Real phoneme-level duration targets are live, and the docs finally know what the project is doing.
 
 ---
 
@@ -9,10 +9,13 @@
 
 ### What Changed
 
-- Phoneme-level duration alignment complete (12,884 / 12,884 LJSpeech utterances)
-- All 5 config files now reference `duration_dir: ./data/ljspeech_prepared/durations`
+- Phoneme-level duration alignment complete: 12,884 / 12,884 LJSpeech utterances
+- All training profiles now reference `duration_dir: ./data/ljspeech_prepared/durations`
 - Training uses real duration targets by default
-- No model architecture changes (all v0.5.3 checkpoints still work)
+- No model architecture changes: all v0.5.3 checkpoints remain compatible
+- Documentation overhaul shipped under `docs/` with index-first navigation
+- Mermaid system and architecture diagrams added to core docs
+- Portfolio summary document added: `docs/HexTTs_AI_Project_Document.docx`
 
 ### What to Do
 
@@ -20,7 +23,17 @@
 python scripts/train.py --config configs/base.yaml --device cuda
 ```
 
-Real durations will auto-load. Monitor TensorBoard for `train/using_real_duration_targets` = 1.0 (confirmed).
+Real durations auto-load. Monitor TensorBoard for:
+
+```text
+train/using_real_duration_targets = 1.0
+```
+
+For docs, start here:
+
+```text
+docs/index.md
+```
 
 ---
 
@@ -28,12 +41,13 @@ Real durations will auto-load. Monitor TensorBoard for `train/using_real_duratio
 
 ### The Big One: Import Path in Alignment Script
 
-The alignment script (`scripts/align_torchaudio.py`) was producing **0% real alignment** despite 98% success in diagnostics.  
-**Root cause:** `from hextts.data.preprocessing import phonemes_per_word` was failing inside an exception handler, which silently swallowed the error.  
-**Fix:** Added `sys.path.insert(0, str(Path(__file__).parent.parent))` at line 47.  
-**Result:** Real alignment coverage: 0% → **100%** (all 12,884 files).
+The alignment script (`scripts/align_torchaudio.py`) produced 0% real alignment while diagnostics reported ~98% success in isolation.
 
-### Config Files
+- Root cause: `from hextts.data.preprocessing import phonemes_per_word` failed inside an exception path, and the error was swallowed.
+- Fix: add repo root to `sys.path` at module load.
+- Result: real alignment coverage restored to 100% (12,884 files).
+
+### Config Coverage
 
 Added `duration_dir: ./data/ljspeech_prepared/durations` to:
 
@@ -43,13 +57,13 @@ Added `duration_dir: ./data/ljspeech_prepared/durations` to:
 - `configs/debug.yaml`
 - `configs/sanity.yaml`
 
-All training profiles now use real targets automatically.
+All training modes now point at real targets by default.
 
 ---
 
 ## New Features
 
-### Windows-Native Alignment (No MFA Required)
+### Windows-Native Forced Alignment (No MFA Required)
 
 ```bash
 python scripts/align_torchaudio.py ^
@@ -60,122 +74,123 @@ python scripts/align_torchaudio.py ^
     --device cuda --batch_size 8 --num_workers 4
 ```
 
-**Performance:**
+Performance snapshot:
 
-- GPU: 6.22 files/sec (RTX 3050 Ti, batch_size=8, num_workers=4, AMP enabled)
+- GPU throughput: 6.22 files/sec (RTX 3050 Ti, batch_size=8, num_workers=4, AMP)
 - Coverage: 100% real alignment
-- Fallback strategy: proportional frame redistribution for sparse alignments (robust)
+- Fallback strategy: proportional redistribution for sparse edge cases
 
-**Optional flags:**
+Optional flags:
 
-- `--device cpu` — CPU mode (slower, no VRAM cost)
-- `--disable_amp` — Turn off automatic mixed precision if needed
-- `--batch_size N` — Adjust batch size for available VRAM
+- `--device cpu`
+- `--disable_amp`
+- `--batch_size N`
+
+### Documentation Architecture Refresh
+
+New maintained docs:
+
+- `docs/index.md`
+- `docs/project-rationale.md`
+- `docs/system-flow.md`
+- `docs/data-pipeline.md`
+- `docs/model-training.md`
+- `docs/inference-evaluation.md`
+- `docs/operations-troubleshooting.md`
+
+Updated summary pages:
+
+- `docs/architecture.md`
+- `docs/training.md`
+- `docs/inference.md`
+- `docs/troubleshooting.md`
+
+New portfolio deliverable:
+
+- `docs/HexTTs_AI_Project_Document.docx`
+
+Mermaid diagrams added in:
+
+- `docs/system-flow.md`
+- `docs/architecture.md`
+- `docs/model-training.md`
 
 ---
 
 ## Expected Training Improvements
 
-| Metric                | Expected Behavior                                   |
-| --------------------- | --------------------------------------------------- |
-| `train/duration_loss` | Should converge faster (real targets vs. proxy)     |
-| Inference predictions | More realistic (trained on ground truth)            |
-| Duration stability    | TensorBoard `train/duration_max` should stay < 20.0 |
-| Skip ratio            | Should remain < 5% (real targets are well-formed)   |
+| Metric | Expected Behavior |
+| --- | --- |
+| `train/duration_loss` | Faster and cleaner convergence with real targets |
+| Inference timing | More realistic duration prediction behavior |
+| Duration stability | `train/duration_max` should stay under guardrails |
+| Skip ratio | Should remain low with valid duration arrays |
 
 ---
 
 ## Backward Compatibility
 
-**Fully backward-compatible with v0.5.3**
+Fully backward-compatible with v0.5.3:
 
 - No model architecture changes
 - No checkpoint format changes
-- All v0.5.3 checkpoints load and resume unchanged
-- If `duration_dir` is missing/empty, trainer falls back to pseudo-uniform durations
-
----
-
-## Known Limitations
-
-- Alignment accuracy depends on WAV2VEC2_ASR_BASE_960H model (pretrained on 960h LibriSpeech)
-- May not work perfectly on very noisy, heavily accented, or out-of-domain speech
-- For maximum quality: review a few generated duration files in `./data/ljspeech_prepared/durations/` manually
-- Windows paths must use `^` for multiline commands in PowerShell
+- Existing v0.5.3 checkpoints can load and resume
+- If `duration_dir` is missing, trainer falls back to pseudo-uniform durations
 
 ---
 
 ## Files Modified
 
-```
-scripts/align_torchaudio.py     ← Fixed sys.path import issue
-configs/base.yaml               ← Added duration_dir
-configs/continue_auto.yaml      ← Added duration_dir
-configs/continue3.yaml          ← Added duration_dir
-configs/debug.yaml              ← Added duration_dir
-configs/sanity.yaml             ← Added duration_dir
-CHANGELOG.md                    ← New entry (v0.5.4)
+```text
+scripts/align_torchaudio.py
+configs/base.yaml
+configs/continue_auto.yaml
+configs/continue3.yaml
+configs/debug.yaml
+configs/sanity.yaml
+docs/index.md
+docs/project-rationale.md
+docs/system-flow.md
+docs/data-pipeline.md
+docs/model-training.md
+docs/inference-evaluation.md
+docs/operations-troubleshooting.md
+docs/architecture.md
+docs/training.md
+docs/inference.md
+docs/troubleshooting.md
+docs/HexTTs_AI_Project_Document.docx
+CHANGELOG.md
+README.md
+readme.long.md
 ```
 
 ---
 
 ## Next Steps
 
-1. **Optional:** Review a few alignment outputs:
-
-   ```bash
-   # Check shape and contents of first duration file
-   python -c "import numpy as np; d = np.load('./data/ljspeech_prepared/durations/LJ001-0001.npy'); print(f'Shape: {d.shape}, Min: {d.min()}, Max: {d.max()}, Sum: {d.sum()}')"
-   ```
-
-2. **Start training:**
-
-   ```bash
-   python scripts/train.py --config configs/base.yaml --device cuda
-   ```
-
-3. **Monitor in TensorBoard:**
-   ```bash
-   tensorboard --logdir=./logs
-   ```
-   Look for `train/using_real_duration_targets = 1.0` to confirm real targets are loaded.
-
----
-
-## Debugging Alignment Issues (If Needed)
-
-If alignment produces mostly fallback results:
-
-1. **Check sys.path fix is in place:**
-
-   ```bash
-   python -c "from hextts.data.preprocessing import text_to_phonemes; print('Import OK')"
-   ```
-
-2. **Test on a single file:**
-
-   ```bash
-   python -c "
-   from scripts.align_torchaudio import _align_with_log_probs
-   # (run diagnostics on sample files)
-   "
-   ```
-
-3. **Verify audio format:**
-   - Expected: 22050 Hz mono `.wav` files
-   - Use `scripts/validate_dataset.py` first if unsure
+1. Start or resume training with real durations:
+```bash
+python scripts/train.py --config configs/base.yaml --device cuda
+```
+2. Monitor duration diagnostics in TensorBoard:
+```bash
+tensorboard --logdir=./logs
+```
+3. Use the new docs index instead of searching old note files:
+```text
+docs/index.md
+```
 
 ---
 
 ## The Funny Part
 
-Three hours of debugging a script that was generating 0% real alignments despite 98% success in isolation.  
-Turned out the word "import" was being swallowed by an exception handler. No error message. No warning.
-Just silent 0%. Python.
+Three hours of debugging told us the alignment math was "fine" while the import path was silently on fire.  
+Then we wrote a full documentation system about it so future-us can panic with better navigation.
 
 ---
 
 ## Credits
 
-Alignment pipeline inspired by forced alignment workflows in speech synthesis research.  
-Duration predictor now has real targets to dream about instead of whatever it was learning before.
+Forced-alignment workflow inspired by modern speech alignment practice, with pragmatically aggressive debugging after the silent-import incident.
