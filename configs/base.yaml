@@ -36,7 +36,7 @@ encoder_dropout: 0.1 # Dropout rate applied in encoder layers.
 
 duration_predictor_filters: 256 # Channel width for duration predictor convolution stack.
 duration_predictor_kernel_sizes: [3, 3] # Kernel sizes for duration predictor conv layers.
-duration_predictor_dropout: 0.5 # Dropout rate used in duration predictor.
+duration_predictor_dropout: 0.3 # Dropout rate used in duration predictor. Reduced from 0.5 — 0.5 was preventing the predictor from learning reliable timing.
 
 decoder_hidden_size: 512 # Hidden dimension for decoder blocks.
 decoder_num_layers: 4 # Number of decoder transformer blocks.
@@ -52,8 +52,8 @@ posterior_flow_num_layers: 4 # Reserved flow-layer count for posterior modeling 
 # ============================================================
 
 learning_rate: 0.0001 # Initial optimizer learning rate.
-adam_beta1: 0.9 # Adam first-moment decay.
-adam_beta2: 0.999 # Adam second-moment decay.
+adam_beta1: 0.8 # Adam first-moment decay. VITS paper default for TTS (was 0.9).
+adam_beta2: 0.99 # Adam second-moment decay. VITS paper default for TTS (was 0.999).
 adam_eps: 1.0e-09 # Adam epsilon for numerical stability.
 scheduler_type: exponential # LR scheduler type (project currently uses exponential).
 scheduler_step: 1000 # Step interval placeholder for schedulers that use step-based decay.
@@ -134,3 +134,7 @@ inference_noise_scale: 0.3 # Std-dev of Gaussian noise added to latent at infere
 
 # Unified dataloader toggle: false=raw audio on the fly, true=precomputed cache.
 use_cached_features: true # true: load precomputed mel/id cache, false: compute features on the fly.
+
+# Optional MFA duration targets. Empty string = use pseudo-uniform targets.
+# Run scripts/extract_mfa_durations.py first to populate this directory.
+duration_dir: "" # path to per-file .npy duration arrays from MFA alignment.

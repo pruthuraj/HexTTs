@@ -51,6 +51,7 @@ class TTSDataset(Dataset):
             audio_dir: path to audio directory
             config: configuration dict with audio parameters
         """
+        from pathlib import Path
         self.audio_dir = audio_dir
         self.config = config
         self.sample_rate = config['sample_rate']
@@ -62,7 +63,9 @@ class TTSDataset(Dataset):
         self.mel_f_max = config['mel_f_max']
         self.ref_level_db = config['ref_level_db']
         self.min_level_db = config['min_level_db']
-        
+        duration_dir_str = config.get('duration_dir', '')
+        self.duration_dir = Path(duration_dir_str) if duration_dir_str else None
+
         # Read metadata
         self.metadata = []
         with open(metadata_file, 'r', encoding='utf-8') as f:
@@ -100,12 +103,23 @@ class TTSDataset(Dataset):
         # Convert phonemes to IDs
         phoneme_ids = self._phonemes_to_ids(phoneme_str)
         
+        duration_targets = None
+        if self.duration_dir is not None:
+            from pathlib import Path
+            dur_path = self.duration_dir / f"{filename}.npy"
+            if dur_path.exists():
+                import numpy as _np
+                dur = _np.load(str(dur_path))
+                if len(dur) == len(phoneme_ids):
+                    duration_targets = torch.LongTensor(dur)
+
         return {
             'filename': filename,
             'audio': torch.FloatTensor(audio),
             'mel_spec': torch.FloatTensor(mel_spec),
             'phoneme_ids': torch.LongTensor(phoneme_ids),
             'phoneme_str': phoneme_str,
+            'duration_targets': duration_targets,
         }
     
     def _audio_to_mel(self, audio: np.ndarray) -> np.ndarray:
@@ -166,38 +180,40 @@ class TTSDataset(Dataset):
 
 
 def collate_fn_vits(batch: List[dict]) -> dict:
-    """
-    Custom collate function for VITS
-    Handles variable-length sequences with padding
-    """
-    
-    # Get batch data
+    """Custom collate for VITS — handles variable-length sequences with padding."""
     filenames = [item['filename'] for item in batch]
     phoneme_ids = [item['phoneme_ids'] for item in batch]
     mel_specs = [item['mel_spec'] for item in batch]
-    
-    # Get lengths
+    dur_list = [item.get('duration_targets') for item in batch]
+
     phoneme_lengths = torch.LongTensor([len(p) for p in phoneme_ids])
     mel_lengths = torch.LongTensor([m.size(1) for m in mel_specs])
-    
-    # Pad phoneme sequences
-    max_phoneme_len = phoneme_lengths.max().item()
-    phoneme_padded = torch.zeros(len(batch), int(max_phoneme_len), dtype=torch.long)
+
+    max_phoneme_len = int(phoneme_lengths.max().item())
+    phoneme_padded = torch.zeros(len(batch), max_phoneme_len, dtype=torch.long)
     for i, p in enumerate(phoneme_ids):
         phoneme_padded[i, :len(p)] = p
-    
-    # Pad mel-spectrograms
-    max_mel_len = mel_lengths.max().item()
-    mel_padded = torch.zeros(len(batch), mel_specs[0].size(0), int(max_mel_len))
+
+    max_mel_len = int(mel_lengths.max().item())
+    mel_padded = torch.zeros(len(batch), mel_specs[0].size(0), max_mel_len)
     for i, m in enumerate(mel_specs):
         mel_padded[i, :, :m.size(1)] = m
-    
+
+    # Pack duration targets only when every item in the batch has them.
+    duration_targets = None
+    if all(d is not None for d in dur_list):
+        dur_padded = torch.zeros(len(batch), max_phoneme_len, dtype=torch.long)
+        for i, d in enumerate(dur_list):
+            dur_padded[i, :len(d)] = d
+        duration_targets = dur_padded
+
     return {
         'filenames': filenames,
         'phoneme_ids': phoneme_padded,
         'phoneme_lengths': phoneme_lengths,
         'mel_spec': mel_padded,
         'mel_lengths': mel_lengths,
+        'duration_targets': duration_targets,
     }
 
 

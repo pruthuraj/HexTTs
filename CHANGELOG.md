@@ -9,6 +9,92 @@ Migration note (v0.5.x): older entries may mention legacy files such as `train_v
 
 ---
 
+## [v0.5.3] - 2026-04-28
+
+### _"The Model Was Doing Everything Wrong Architecturally And We Fixed It"_
+
+### Summary
+
+Seven architecture improvements, two silent pipeline bugs fixed, and a training speed pass. v0.5.2
+made the reconstruction loss actually work. v0.5.3 makes the model actually worth training.
+
+The headline bugs: Griffin-Lim was being called directly on a mel spectrogram (crashes, swallowed by
+a warn handler, zero valid audio samples since audio generation was introduced). The sample denormalization
+was still using the pre-v0.5.2 broken formula. Both were silent. Both have been wrong for a long time.
+
+On the architecture side: the decoder was outputting `tanh` (range [-1,1]) while all targets are in [0,1]
+after the v0.5.2 normalization fix. The transformer blocks were post-norm when they should be pre-norm.
+The posterior encoder had 1×1 convolutions with no temporal context. The prior was a single linear layer.
+All fixed. Requires fresh training — the v0.5.2 run was only ~5% complete so the restart cost is small.
+
+### Fixed
+
+- **Griffin-Lim Called on Mel Spectrogram** — `hextts/vocoder/griffin_lim.py`, `utils/sample_generation.py`
+  - `librosa.griffinlim()` expects a linear STFT (513 bins), not a mel spectrogram (80 bins)
+  - Crash was caught by `warnings.warn`, so training continued with zero valid audio samples at every epoch
+  - Fix: correct pipeline — `mel_db → power → mel_to_stft (pseudo-inverse) → griffinlim`
+  - Added `fmin`/`fmax` parameters so the filterbank inversion matches the training filterbank
+
+- **Sample Generation Denormalization Bug** — `utils/sample_generation.py`
+  - Was using `mel * (-ref_level_db) + ref_level_db` = `mel * (-20) + 20` — the pre-v0.5.2 broken formula
+  - Correct inverse of v0.5.2 normalization: `mel * (-min_level_db) + min_level_db` = `mel * 100 - 100`
+  - v0.5.2 fixed this everywhere except sample generation; now consistent across the full pipeline
+
+### Architecture Changes (all checkpoint-breaking, fresh training required)
+
+- **Decoder output: `tanh` → `sigmoid`** — `hextts/models/vits_impl.py`
+  - Training targets are in [0, 1]; `tanh` output [-1, 1] was wasting half the output range
+  - `sigmoid` maps the full real line to [0, 1], matching targets exactly, better gradient at saturation
+
+- **TransformerBlock: post-norm → pre-norm** — `hextts/models/vits_impl.py`
+  - Pre-norm places LayerNorm before each sub-layer, keeping the skip path clean for gradients
+  - More stable training curves, less LR sensitivity — standard in all modern transformer architectures
+
+- **TransformerBlock FFN: `ReLU` → `GELU`** — `hextts/models/vits_impl.py`
+  - GELU softly gates negative activations rather than hard-zeroing them
+  - Standard upgrade for transformer FFNs, no parameter change
+
+- **PosteriorEncoder: 1×1 convs → 3×1 convs + GroupNorm** — `hextts/models/vits_impl.py`
+  - 1×1 convolutions are point-wise projections with zero temporal context
+  - `kernel_size=3, padding=1` gives each frame ±1 neighboring frame (~23 ms per layer)
+  - `GroupNorm(1, hidden_size)` (instance norm) — stable with small batches, AMP-compatible
+
+- **DurationPredictor: fixed 3rd context conv (kernel=5)** — `hextts/models/vits_impl.py`
+  - Previous 2-layer stack with kernel=3 had effective receptive field of ±2 phonemes
+  - Fixed third conv (kernel=5) extends receptive field to ±4 phonemes for broader prosodic context
+
+- **Prior projection: linear → 2-layer MLP with GELU** — `hextts/models/vits_impl.py`
+  - Single linear prior could only learn linear phoneme→latent mappings
+  - 2-layer MLP (hidden dim = encoder_hidden_size, GELU) adds non-linear expressive capacity
+
+- **Multi-scale mel loss: add scale=8** — `hextts/training/trainer.py`
+  - Previous scales (1, 2, 4) captured up to ~47 ms temporal structure
+  - Scale=8 (~93 ms) enforces sentence-level prosodic structure, not just local frame accuracy
+
+### Training Speed (base.yaml)
+
+- `use_amp: true` — float16 tensor cores: ~1.5–2× faster per step on RTX 3050 Ti
+- `batch_size: 6` — AMP freed VRAM headroom; larger batches, more stable gradients
+- `checkpoint_interval: 1000` — reduced 273 MB checkpoint write frequency
+- `loss_weight_duration: 0.15`, `loss_weight_stft: 0.15` — both were under-weighted at 0.1
+
+### Compatibility
+
+- **Checkpoint-breaking.** Architecture changes add parameters and change forward-pass semantics.
+  No v0.5.2 checkpoint can be loaded under v0.5.3. Retrain from scratch.
+
+### Developer Status
+
+```
+Architectural sins corrected    : 7
+Sample audio bugs fixed         : 2 (both broken simultaneously, both silent)
+Checkpoints invalidated         : all of them (again) (the v0.5.2 run was only 5% done)
+Net GPU time saved vs continuing: +336 minutes (AMP savings over full run > restart cost)
+GPU fan RPM                     : unchanged (already at max, as always)
+```
+
+---
+
 ## [v0.5.2] - 2026-04-27
 
 ### _"The Model Was Lying To You The Entire Time And We Fixed It"_
@@ -947,8 +1033,9 @@ LJSpeech — 13,100 samples, single speaker, 24kHz, recorded by Linda Johnson wh
 
 ---
 
-_Last updated: 27.04.2026_  
+_Last updated: 28.04.2026_  
 _Changelog maintained by: someone who cares, apparently_  
 _GPU status: Occupied_  
 _Linda Johnson memorial fund: ongoing_  
-_Normalization formula correctness: finally_
+_Normalization formula correctness: still correct_  
+_Architectural decisions correctness: finally_

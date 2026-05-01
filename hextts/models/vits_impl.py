@@ -65,7 +65,7 @@ class TransformerBlock(nn.Module):
         # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(hidden_size, hidden_size * 4),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size * 4, hidden_size),
             nn.Dropout(dropout)
@@ -85,16 +85,17 @@ class TransformerBlock(nn.Module):
         Returns:
             (batch_size, seq_len, hidden_size)
         """
-        # Self-attention with residual
-        attn_out, _ = self.attention(x, x, x, key_padding_mask=mask)
-        x = x + self.dropout(attn_out)
+        # Pre-norm: normalize before each sub-layer for more stable gradient flow
+        residual = x
         x = self.norm1(x)
-        
-        # FFN with residual
-        ffn_out = self.ffn(x)
-        x = x + self.dropout(ffn_out)
+        attn_out, _ = self.attention(x, x, x, key_padding_mask=mask)
+        x = residual + self.dropout(attn_out)
+
+        residual = x
         x = self.norm2(x)
-        
+        ffn_out = self.ffn(x)
+        x = residual + self.dropout(ffn_out)
+
         return x
 
 
@@ -157,7 +158,7 @@ class DurationPredictor(nn.Module):
         
         self.conv_layers = nn.ModuleList()
         self.norms = nn.ModuleList()
-        
+
         in_channels = hidden_size
         for kernel_size in kernel_sizes:
             self.conv_layers.append(
@@ -165,7 +166,12 @@ class DurationPredictor(nn.Module):
             )
             self.norms.append(nn.LayerNorm(filters))
             in_channels = filters
-        
+
+        # Fixed wider-context layer: kernel=5 sees ±2 phonemes at this depth,
+        # giving the predictor broader awareness of local prosodic context.
+        self.context_conv = nn.Conv1d(filters, filters, 5, padding=2)
+        self.context_norm = nn.LayerNorm(filters)
+
         self.linear = nn.Linear(filters, 1)
         self.dropout = nn.Dropout(dropout)
     
@@ -179,15 +185,23 @@ class DurationPredictor(nn.Module):
         # Transpose for conv1d
         x = x.transpose(1, 2)  # (batch_size, hidden_size, seq_len)
         
-        # Pass through conv layers
+        # Configurable conv stack
         for conv, norm in zip(self.conv_layers, self.norms):
             x = conv(x)
-            x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
+            x = x.transpose(1, 2)
             x = norm(x)
             x = F.relu(x)
             x = self.dropout(x)
-            x = x.transpose(1, 2)  # (batch_size, filters, seq_len)
-        
+            x = x.transpose(1, 2)
+
+        # Fixed wider-context layer
+        x = self.context_conv(x)
+        x = x.transpose(1, 2)
+        x = self.context_norm(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        x = x.transpose(1, 2)
+
         # Predict duration
         x = x.transpose(1, 2)  # (batch_size, seq_len, filters)
         duration = self.linear(x)  # (batch_size, seq_len, 1)
@@ -202,16 +216,21 @@ class DurationPredictor(nn.Module):
 
 class PosteriorEncoder(nn.Module):
     """Encodes mel-spectrogram to latent distribution (training only)"""
-    
+
     def __init__(self, mel_channels: int, hidden_size: int, latent_dim: int):
         super().__init__()
-        
-        self.conv1 = nn.Conv1d(mel_channels, hidden_size, 1)
-        self.conv2 = nn.Conv1d(hidden_size, hidden_size, 1)
-        
+
+        # kernel_size=3 gives each frame ±1 frame of context (~23 ms at 22050/256 hop).
+        # GroupNorm(1, C) is instance norm: normalises each channel across time,
+        # stable with small batch sizes and compatible with AMP.
+        self.conv1 = nn.Conv1d(mel_channels, hidden_size, 3, padding=1)
+        self.norm1 = nn.GroupNorm(1, hidden_size)
+        self.conv2 = nn.Conv1d(hidden_size, hidden_size, 3, padding=1)
+        self.norm2 = nn.GroupNorm(1, hidden_size)
+
         self.mu_linear = nn.Linear(hidden_size, latent_dim)
         self.logvar_linear = nn.Linear(hidden_size, latent_dim)
-    
+
     def forward(self, mel_spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -219,8 +238,8 @@ class PosteriorEncoder(nn.Module):
         Returns:
             (z, mu, logvar) where z is sampled latent code
         """
-        x = F.relu(self.conv1(mel_spec))
-        x = F.relu(self.conv2(x))
+        x = F.relu(self.norm1(self.conv1(mel_spec)))
+        x = F.relu(self.norm2(self.conv2(x)))
         x = x.transpose(1, 2)  # (batch_size, time_steps, hidden_size)
         
         mu = self.mu_linear(x)
@@ -271,7 +290,7 @@ class Decoder(nn.Module):
         x = x + residual
 
         mel = self.output(x)
-        mel = torch.tanh(mel)
+        mel = torch.sigmoid(mel)
         mel = mel.transpose(1, 2)
 
         return mel
@@ -426,8 +445,14 @@ class VITS(nn.Module):
         # New v0.4.3: PostNet for mel-spectrogram refinement
         self.postnet = PostNet(mel_channels=config['n_mel_channels'])
         
-        # NEW: project expanded text features into latent space
-        self.prior_proj = nn.Linear(config["encoder_hidden_size"], config["latent_dim"])
+        # Two-layer MLP prior: more expressive than a single linear projection.
+        # The hidden layer lets the model learn non-linear relationships between
+        # phoneme encodings and the latent prior before mapping to latent_dim.
+        self.prior_proj = nn.Sequential(
+            nn.Linear(config["encoder_hidden_size"], config["encoder_hidden_size"]),
+            nn.GELU(),
+            nn.Linear(config["encoder_hidden_size"], config["latent_dim"]),
+        )
     
     def forward(self, phonemes: torch.Tensor, mel_spec: Optional[torch.Tensor] = None,
                 lengths: Optional[torch.Tensor] = None,

@@ -1,15 +1,13 @@
 """
 Cached feature dataloader for faster VITS training.
 
-Patched features:
-- loads precomputed mel spectrograms and phoneme IDs
-- filters long samples using max_seq_length
-- sorts kept samples by mel length to reduce padding waste
-- keeps warning summary support
-
 Expected cache layout:
-<data_dir>/cache/mels/<filename>.npy
-<data_dir>/cache/ids/<filename>.npy
+<data_dir>/cache/mels/<filename>.npy   — precomputed mel spectrogram
+<data_dir>/cache/ids/<filename>.npy    — phoneme ID array
+<duration_dir>/<filename>.npy          — optional MFA duration targets (integers, frames per phoneme)
+
+When duration files are present, the batch includes 'duration_targets' (LongTensor).
+When absent, the trainer falls back to pseudo-uniform targets automatically.
 """
 
 import os
@@ -53,11 +51,13 @@ def reset_warning_summary():
 
 # Dataset class that loads precomputed mel spectrograms and phoneme IDs, with filtering and sorting
 class TTSCachedDataset(Dataset):
-    def __init__(self, metadata_file: str, data_dir: str, max_seq_length=None):
+    def __init__(self, metadata_file: str, data_dir: str, max_seq_length=None,
+                 duration_dir: str = ""):
         self.data_dir = Path(data_dir)
         self.cache_mels = self.data_dir / "cache" / "mels"
         self.cache_ids = self.data_dir / "cache" / "ids"
         self.max_seq_length = max_seq_length
+        self.duration_dir = Path(duration_dir) if duration_dir else None
 
         self.samples = []
         skipped_missing = 0
@@ -121,10 +121,19 @@ class TTSCachedDataset(Dataset):
         mel_spec = np.load(mel_path)
         phoneme_ids = np.load(ids_path)
 
+        duration_targets = None
+        if self.duration_dir is not None:
+            dur_path = self.duration_dir / f"{filename}.npy"
+            if dur_path.exists():
+                dur = np.load(str(dur_path))
+                if len(dur) == len(phoneme_ids):
+                    duration_targets = torch.LongTensor(dur)
+
         return {
             "filename": filename,
             "mel_spec": torch.FloatTensor(mel_spec),
             "phoneme_ids": torch.LongTensor(phoneme_ids),
+            "duration_targets": duration_targets,
         }
 
 
@@ -132,6 +141,7 @@ def collate_fn_vits(batch: List[dict]) -> dict:
     filenames = [item["filename"] for item in batch]
     phoneme_ids = [item["phoneme_ids"] for item in batch]
     mel_specs = [item["mel_spec"] for item in batch]
+    dur_list = [item.get("duration_targets") for item in batch]
 
     phoneme_lengths = torch.LongTensor([len(p) for p in phoneme_ids])
     mel_lengths = torch.LongTensor([m.size(1) for m in mel_specs])
@@ -146,28 +156,40 @@ def collate_fn_vits(batch: List[dict]) -> dict:
     for i, m in enumerate(mel_specs):
         mel_padded[i, :, :m.size(1)] = m
 
+    # Pack duration targets only when every item in the batch has them.
+    duration_targets = None
+    if all(d is not None for d in dur_list):
+        dur_padded = torch.zeros(len(batch), max_phoneme_len, dtype=torch.long)
+        for i, d in enumerate(dur_list):
+            dur_padded[i, :len(d)] = d
+        duration_targets = dur_padded
+
     return {
         "filenames": filenames,
         "phoneme_ids": phoneme_padded,
         "phoneme_lengths": phoneme_lengths,
         "mel_spec": mel_padded,
         "mel_lengths": mel_lengths,
+        "duration_targets": duration_targets,
     }
 
 
 def create_dataloaders(config: dict, batch_size: int, num_workers: int = 0) -> Tuple[DataLoader, DataLoader]:
     data_dir = config["data_dir"]
     max_seq_length = config.get("max_seq_length", None)
+    duration_dir = config.get("duration_dir", "")
 
     train_set = TTSCachedDataset(
         os.path.join(data_dir, "train.txt"),
         data_dir,
         max_seq_length=max_seq_length,
+        duration_dir=duration_dir,
     )
     val_set = TTSCachedDataset(
         os.path.join(data_dir, "val.txt"),
         data_dir,
         max_seq_length=max_seq_length,
+        duration_dir=duration_dir,
     )
 
     print(f"Training set size: {len(train_set)}")

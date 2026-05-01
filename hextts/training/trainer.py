@@ -9,6 +9,7 @@ Fixes:
 """
 
 import os
+from typing import Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -116,8 +117,9 @@ class VITSTrainer:
         else:
             self.warmup_scheduler = None
 
-        # Multi-scale mel loss (no trainable params, created once)
-        self.ms_mel_loss = MultiScaleMelLoss(scales=(1, 2, 4))
+        # Multi-scale mel loss (no trainable params, created once).
+        # scale=8 adds sentence-level prosody enforcement on top of frame/window detail.
+        self.ms_mel_loss = MultiScaleMelLoss(scales=(1, 2, 4, 8))
         
         # AMP scaler (for mixed precision training)
         # Use new torch.amp.GradScaler API with device specification
@@ -178,6 +180,7 @@ class VITSTrainer:
         phoneme_lengths: torch.Tensor,
         mel_lengths: torch.Tensor,
         config: dict,
+        duration_targets: Optional[torch.Tensor] = None,
     ) -> dict:
         """
         Compute total loss
@@ -235,16 +238,25 @@ class VITSTrainer:
             kl_anneal = 0.0
             kl_loss = predicted_mel.new_zeros(())
         
-        # 3. Duration loss: token-level pseudo supervision + global sum supervision
+        # 3. Duration loss: real MFA targets when available, pseudo-uniform fallback otherwise.
         pred = duration
         max_seq_len = pred.size(1)
 
-        target = self._build_pseudo_duration_targets(
-            phoneme_lengths=phoneme_lengths,
-            mel_lengths=mel_lengths,
-            max_seq_len=max_seq_len,
-            device=pred.device,
+        using_real_targets = (
+            duration_targets is not None
+            and duration_targets.size(0) == pred.size(0)
+            and duration_targets.size(1) >= max_seq_len
         )
+
+        if using_real_targets:
+            target = duration_targets[:, :max_seq_len].to(pred.device)
+        else:
+            target = self._build_pseudo_duration_targets(
+                phoneme_lengths=phoneme_lengths,
+                mel_lengths=mel_lengths,
+                max_seq_len=max_seq_len,
+                device=pred.device,
+            )
 
         token_mask = self._make_length_mask(phoneme_lengths, max_seq_len)
         token_mask_f = token_mask.float()
@@ -296,6 +308,7 @@ class VITSTrainer:
             'sum_error_mean': sum_abs_error.mean().item(),
             'speech_rate_proxy_mean': speech_rate_proxy.mean().item(),
             'length_mismatch_frames': length_mismatch,
+            'using_real_duration_targets': int(using_real_targets),
         }
 
     def log_duration_debug(
@@ -353,6 +366,9 @@ class VITSTrainer:
             mel_spec = batch['mel_spec'].to(self.device)
             phoneme_lengths = batch['phoneme_lengths'].to(self.device)
             mel_lengths = batch['mel_lengths'].to(self.device)
+            duration_targets = batch.get('duration_targets')
+            if duration_targets is not None:
+                duration_targets = duration_targets.to(self.device)
             
             # Forward pass with optional autocast for mixed precision
             try:
@@ -368,7 +384,10 @@ class VITSTrainer:
                         lengths=phoneme_lengths,
                         mel_lengths=mel_lengths,
                     )
-                    loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
+                    loss_dict = self.compute_loss(
+                        outputs, mel_spec, phoneme_lengths, mel_lengths,
+                        self.config, duration_targets=duration_targets,
+                    )
 
                     if batch_idx == 0:
                         self.log_duration_debug("train", batch, outputs, loss_dict)
@@ -450,6 +469,7 @@ class VITSTrainer:
                     self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], self.global_step)
                     self.writer.add_scalar('train/skipped_batches', skipped_batches, self.global_step)
                     self.writer.add_scalar('train/length_mismatch_frames', loss_dict['length_mismatch_frames'], self.global_step)
+                    self.writer.add_scalar('train/using_real_duration_targets', loss_dict['using_real_duration_targets'], self.global_step)
 
                     # Duration diagnostics
                     self.writer.add_scalar('train/pred_duration_sum_mean', loss_dict['pred_duration_sum_mean'], self.global_step)
@@ -519,6 +539,9 @@ class VITSTrainer:
             mel_spec = batch["mel_spec"].to(self.device)
             phoneme_lengths = batch["phoneme_lengths"].to(self.device)
             mel_lengths = batch["mel_lengths"].to(self.device)
+            duration_targets = batch.get("duration_targets")
+            if duration_targets is not None:
+                duration_targets = duration_targets.to(self.device)
 
             outputs = self.model(
                 phoneme_ids,
@@ -527,7 +550,10 @@ class VITSTrainer:
                 mel_lengths=mel_lengths,
             )
 
-            loss_dict = self.compute_loss(outputs, mel_spec, phoneme_lengths, mel_lengths, self.config)
+            loss_dict = self.compute_loss(
+                outputs, mel_spec, phoneme_lengths, mel_lengths,
+                self.config, duration_targets=duration_targets,
+            )
             loss = loss_dict["total_loss"]
 
             if len(loss_dict) > 0 and valid_batches == 0:
