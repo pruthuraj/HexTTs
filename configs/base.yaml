@@ -136,6 +136,5 @@ inference_noise_scale: 0.3 # Std-dev of Gaussian noise added to latent at infere
 # Unified dataloader toggle: false=raw audio on the fly, true=precomputed cache.
 use_cached_features: true # true: load precomputed mel/id cache, false: compute features on the fly.
 
-# Optional MFA duration targets. Empty string = use pseudo-uniform targets.
-# Run scripts/extract_mfa_durations.py first to populate this directory.
-duration_dir: "" # path to per-file .npy duration arrays from MFA alignment.
+# duration_dir is defined once at the top of this file (PATHS AND DATA section).
+# Set it to "" there to fall back to pseudo-uniform duration targets.
