@@ -99,6 +99,8 @@ class ResBlock2(nn.Module):
 
 
 class HiFiGANGenerator(nn.Module):
+    """HiFi-GAN generator: mel-spectrogram → waveform via stacked transposed convs + ResBlocks."""
+
     def __init__(self, cfg):
         """Build HiFi-GAN generator from config dictionary."""
         super().__init__()

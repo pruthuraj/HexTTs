@@ -209,7 +209,11 @@ class DurationPredictor(nn.Module):
         # max=20.0: at 256-frame hop / 22050 Hz, 20 frames ≈ 233 ms per phoneme —
         # an upper bound derived from slow-speech LJSpeech statistics. Without this
         # cap, early-training noise can cause duration explosion and OOM during
-        # repeat_interleave. Configurable via max_duration_value in base.yaml.
+        # repeat_interleave.
+        # NOTE: This 20.0 must stay in sync with config['max_duration_value'] and
+        # architecture_flags.duration_clamp in checkpointing.py — the checkpoint
+        # validator catches drift but the value here is hard-coded. If you change
+        # the cap in base.yaml, update it here too.
         duration = torch.clamp(F.softplus(duration), min=1.0, max=20.0)
         return duration
 
@@ -595,6 +599,8 @@ class VITS(nn.Module):
         duration = torch.round(duration.squeeze(-1)).long().clamp(min=1, max=20)  # (B, S)
 
         outputs = []
+        # Per-sample loop (not batched): each utterance has a different total
+        # expanded length, so we expand independently then pad to batch max below.
         for i in range(batch_size):
             # repeat_interleave is a single vectorized CUDA op; avoids per-frame .item() syncs
             outputs.append(torch.repeat_interleave(x[i], duration[i], dim=0))

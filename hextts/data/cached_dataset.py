@@ -51,8 +51,17 @@ def reset_warning_summary():
 
 # Dataset class that loads precomputed mel spectrograms and phoneme IDs, with filtering and sorting
 class TTSCachedDataset(Dataset):
+    """Dataset over precomputed mel/id .npy files. Sorts by mel length for batching."""
+
     def __init__(self, metadata_file: str, data_dir: str, max_seq_length=None,
                  duration_dir: str = ""):
+        """Index the cache and (optionally) the duration directory.
+
+        Samples missing either mel or id .npy are silently skipped and counted
+        in WARNING_STATS. Samples whose mel length exceeds max_seq_length are
+        also skipped. Final sample list is sorted by mel length to reduce
+        padding waste in the dataloader.
+        """
         self.data_dir = Path(data_dir)
         self.cache_mels = self.data_dir / "cache" / "mels"
         self.cache_ids = self.data_dir / "cache" / "ids"
@@ -138,6 +147,7 @@ class TTSCachedDataset(Dataset):
 
 
 def collate_fn_vits(batch: List[dict]) -> dict:
+    """Pad cached samples into a batch. See raw_dataset.collate_fn_vits for shape spec."""
     filenames = [item["filename"] for item in batch]
     phoneme_ids = [item["phoneme_ids"] for item in batch]
     mel_specs = [item["mel_spec"] for item in batch]
@@ -175,6 +185,11 @@ def collate_fn_vits(batch: List[dict]) -> dict:
 
 
 def create_dataloaders(config: dict, batch_size: int, num_workers: int = 0) -> Tuple[DataLoader, DataLoader]:
+    """Build train/val DataLoaders over the cached feature directory.
+
+    Note: shuffle=False on both loaders — samples are pre-sorted by mel length
+    so a global shuffle would defeat the padding-waste optimisation.
+    """
     data_dir = config["data_dir"]
     max_seq_length = config.get("max_seq_length", None)
     duration_dir = config.get("duration_dir", "")

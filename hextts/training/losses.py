@@ -20,6 +20,7 @@ class LossBreakdown:
     kl: float = 0.0
 
     def as_dict(self) -> Dict[str, float]:
+        """Return components as a plain dict for TensorBoard / JSON logging."""
         return {
             "total": self.total,
             "reconstruction": self.reconstruction,
@@ -29,6 +30,7 @@ class LossBreakdown:
 
 
 def combine_losses(*, reconstruction: float = 0.0, duration: float = 0.0, kl: float = 0.0) -> LossBreakdown:
+    """Sum loss components into a LossBreakdown. Components are pre-weighted."""
     total = reconstruction + duration + kl
     return LossBreakdown(total=total, reconstruction=reconstruction, duration=duration, kl=kl)
 

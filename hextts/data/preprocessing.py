@@ -173,6 +173,7 @@ def process_ljspeech_metadata(dataset_path, output_path, train_split=0.95, seed=
 
 
 def cli_main(argv: Optional[list[str]] = None) -> int:
+    """CLI entrypoint for `scripts/prepare_data.py`. Returns POSIX exit code."""
     parser = argparse.ArgumentParser(description="Prepare LJSpeech metadata for HexTTs")
     parser.add_argument(
         "dataset_path",

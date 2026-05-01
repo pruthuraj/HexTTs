@@ -6,6 +6,7 @@ import logging
 
 
 def get_training_logger(name: str = "hextts.training") -> logging.Logger:
+    """Return a singleton logger configured once with a stream handler."""
     logger = logging.getLogger(name)
     if not logger.handlers:
         handler = logging.StreamHandler()

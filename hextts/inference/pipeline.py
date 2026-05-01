@@ -27,6 +27,19 @@ class VITSInference:
         vocoder_checkpoint: Optional[str] = None,
         vocoder_config: Optional[str] = None,
     ):
+        """Build the VITS model, validate the checkpoint, and optionally attach HiFi-GAN.
+
+        Loads with ``strict=False`` so v0.4.x checkpoints without ``postnet.*``
+        keys still load — non-PostNet missing keys are surfaced as warnings.
+        Both vocoder paths must be provided together (or omitted together) to
+        enable HiFi-GAN; otherwise Griffin-Lim is used at synthesis time.
+
+        Raises:
+            ValueError: if checkpoint metadata mismatches config (via
+                validate_checkpoint_compatibility), or if only one of the two
+                vocoder paths is supplied.
+            FileNotFoundError: if either supplied vocoder path does not exist.
+        """
         # Keep runtime artifacts on the chosen device and retain config for conversions.
         self.device = device
         self.config = config
@@ -136,7 +149,18 @@ class VITSInference:
         duration_scale: float = 1.0,
         noise_scale: float = 0.3,
     ) -> np.ndarray:
-        """Generate model mel output and map it back to dB-like scale used by vocoder path."""
+        """Generate model mel output and map it back to dB-like scale used by vocoder path.
+
+        Returns a numpy array of shape ``(n_mels, T)`` with values in
+        ``[min_level_db, 0]`` dB — the inverse of the dataset's ``[0, 1]``
+        normalisation. The vocoder path re-normalises this back to ``[0, 1]``;
+        Griffin-Lim consumes the dB scale directly.
+
+        Raises:
+            ValueError: if phoneme_ids isn't shape (1, seq_len), or if the
+                model returns NaN/Inf (usually a sign of an unstable checkpoint
+                — run the `tts-smoke-test` skill).
+        """
         if phoneme_ids.dim() != 2 or phoneme_ids.size(0) != 1:
             raise ValueError(f"Expected phoneme_ids of shape (1, seq_len), got {phoneme_ids.shape}")
 

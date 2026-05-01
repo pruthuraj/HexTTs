@@ -57,6 +57,11 @@ def evaluate_audio(audio_path: str, sr_target: int | None = None) -> dict:
     )
     spectral_flatness_val = spectral_flatness(audio)
 
+    # NOTE: mel parameters here are evaluation-only and intentionally fixed —
+    # they do NOT need to match configs/base.yaml. fmax=8000 (vs 11025 in base
+    # config) gives a more speech-focused band for quality verdicts. If you
+    # change base.yaml's mel settings, leave these as-is for stable cross-run
+    # comparison.
     mel = librosa.feature.melspectrogram(
         y=audio.astype(np.float32),
         sr=sr,

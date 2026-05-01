@@ -14,6 +14,10 @@ from pathlib import Path
 from collections import defaultdict
 
 
+# TODO(docs): PHONEME_TO_ID is duplicated verbatim in cached_dataset.py and
+# validation.py. This module is the canonical source — the other two should
+# import from here. Leaving as-is to keep this pass docs-only; flagged for
+# a future refactor.
 # Phoneme to ID mapping (Arpabet)
 PHONEME_TO_ID = {
     'AA': 0, 'AE': 1, 'AH': 2, 'AO': 3, 'AW': 4, 'AY': 5, 'B': 6, 'CH': 7,
@@ -180,7 +184,17 @@ class TTSDataset(Dataset):
 
 
 def collate_fn_vits(batch: List[dict]) -> dict:
-    """Custom collate for VITS — handles variable-length sequences with padding."""
+    """Custom collate for VITS — handles variable-length sequences with padding.
+
+    Returns a dict with shapes:
+        phoneme_ids:      (B, max_phoneme_len)  long, zero-padded
+        phoneme_lengths:  (B,)                  long
+        mel_spec:         (B, n_mels, max_mel_len)  float, zero-padded
+        mel_lengths:      (B,)                  long, in mel frames
+        duration_targets: (B, max_phoneme_len) long OR None
+            (None unless EVERY item in the batch had a duration file — partial
+            availability collapses to None for the whole batch)
+    """
     filenames = [item['filename'] for item in batch]
     phoneme_ids = [item['phoneme_ids'] for item in batch]
     mel_specs = [item['mel_spec'] for item in batch]

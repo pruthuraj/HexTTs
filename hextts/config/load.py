@@ -24,7 +24,17 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """Load and validate config, preferring package configs when available."""
+    """Load and validate config, preferring package configs when available.
+
+    When ``config_path`` is None, searches ``configs/base.yaml`` then
+    ``vits_config.yaml``. The resolved path is injected back into the returned
+    dict as ``config_path`` for downstream debugging.
+
+    Raises:
+        FileNotFoundError: if no config file is found in the search order.
+        ValueError: if the YAML root is not a mapping, or validation fails.
+        TypeError: if a required field has the wrong type (from validation).
+    """
     # Selection order keeps modern package configs first while preserving legacy fallback.
     if config_path:
         path = Path(config_path)

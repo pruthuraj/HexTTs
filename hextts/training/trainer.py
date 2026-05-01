@@ -832,6 +832,7 @@ def run_training(config: dict, device: torch.device, checkpoint: str | None = No
 
 
 def main():
+    """CLI entrypoint mirroring scripts/train.py for direct module invocation."""
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/base.yaml',
                        help='Path to config file')

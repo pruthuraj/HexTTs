@@ -18,7 +18,17 @@ REQUIRED_KEYS = {
 
 
 def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate required config keys and basic invariants."""
+    """Validate required config keys and basic invariants.
+
+    Returns the same dict (not a copy) so callers can chain
+    ``validate_config(load_yaml(...))``.
+
+    Raises:
+        ValueError: if a required key is missing, a numeric field is non-positive,
+            STFT sizing constraints are violated (hop > win, win > n_fft), or
+            ``mel_f_max`` exceeds the Nyquist limit.
+        TypeError: if a required key has the wrong runtime type.
+    """
     # Fail fast on missing required fields so errors are explicit during startup.
     missing = [k for k in REQUIRED_KEYS if k not in config]
     if missing:

@@ -294,6 +294,9 @@ def validate_cached_features(prepared_path: str | Path) -> dict:
             if results["sample_id_shape"] is None:
                 results["sample_id_shape"] = ids.shape
 
+            # NOTE: 80 is hard-coded here but configs/base.yaml exposes
+            # n_mel_channels. If you change n_mel_channels, this check will
+            # report false positives. TODO(docs): plumb config through.
             if mel.ndim != 2 or mel.shape[0] != 80:
                 results["bad_mel_shapes"].append((filename, mel.shape))
 
