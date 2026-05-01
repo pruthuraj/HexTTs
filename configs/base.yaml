@@ -7,6 +7,7 @@
 
 data_dir: ./data/ljspeech_prepared # Directory containing prepared train.txt and val.txt metadata files.
 audio_dir: ./data/LJSpeech-1.1/wavs # Directory containing source .wav files referenced by metadata.
+duration_dir: ./data/ljspeech_prepared/durations # Directory containing per-phoneme duration targets from align_torchaudio.py.
 log_dir: ./logs # TensorBoard/event logging output directory.
 checkpoint_dir: ./checkpoints # Directory used to save periodic and best model checkpoints.
 

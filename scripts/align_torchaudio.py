@@ -9,16 +9,11 @@ Each array holds one integer per phoneme: the number of mel frames assigned to i
 
 Pipeline
 --------
-1. Load audio → resample to 16 kHz for wav2vec2
-2. Run WAV2VEC2_ASR_BASE_960H → log-softmax emission
-3. Encode transcript as character token indices (|  between words)
-4. forced_align → per-frame token assignments
-5. merge_tokens → token spans (char → time range)
-6. Group char spans into per-word frame ranges
-7. g2p_en per word → phoneme count per word
-8. Distribute word frame counts uniformly across phonemes
-9. Scale alignment frames → mel frames (proportional to total audio length)
-10. Save as int32 .npy
+1. DataLoader (num_workers) loads + resamples audio in parallel
+2. Pad batch → batched wav2vec2 inference (GPU-friendly)
+3. Per-file: forced_align → merge_tokens → word frame ranges
+4. Per-word: g2p (word-level cache) → distribute frames to phonemes
+5. Save as int32 .npy
 
 Usage
 -----
@@ -27,7 +22,7 @@ Usage
         --metadata_csv data/LJSpeech-1.1/metadata.csv \\
         --prepared_dir data/ljspeech_prepared \\
         --output_dir   data/ljspeech_prepared/durations \\
-        [--hop_length 256] [--orig_sr 22050] [--device cpu] [--limit 0]
+        [--device cuda] [--batch_size 8] [--num_workers 2] [--limit 0]
 
 After running, set in configs/base.yaml:
     duration_dir: ./data/ljspeech_prepared/durations
@@ -36,21 +31,31 @@ After running, set in configs/base.yaml:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import logging
 import os
+import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Add project root to path so hextts can be imported
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import torch
 import torchaudio
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 log = logging.getLogger(__name__)
 
-# WAV2VEC2_ASR_BASE_960H constants
 _ALIGN_SR = 16_000
-_BLANK_IDX = 0  # '-' is index 0 in the bundle label list
+_BLANK_IDX = 0  # '-' is index 0 in WAV2VEC2_ASR_BASE_960H labels
+
+# Word-level g2p cache: word → phoneme count.  Shared across the whole run.
+_WORD_CACHE: Dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -61,17 +66,41 @@ def build_label_index(bundle) -> Dict[str, int]:
     return {label: i for i, label in enumerate(bundle.get_labels())}
 
 
+def _is_content_char(ch: str, label_to_idx: Dict[str, int]) -> bool:
+    """True if ch maps to a non-blank label (index > 0)."""
+    return label_to_idx.get(ch, 0) > 0
+
+
+def _encoded_words(text: str, label_to_idx: Dict[str, int]) -> List[List[int]]:
+    """Return per-word encoded char IDs, dropping words with no encodable chars."""
+    out: List[List[int]] = []
+    for raw_word in text.upper().strip().split():
+        chars = [label_to_idx[ch] for ch in raw_word if _is_content_char(ch, label_to_idx)]
+        if chars:
+            out.append(chars)
+    return out
+
+
+def _g2p_words(text: str) -> List[str]:
+    """Normalize raw words for g2p to reduce punctuation-related mismatches."""
+    words: List[str] = []
+    for raw_word in text.strip().split():
+        clean = re.sub(r"[^A-Za-z']+", "", raw_word)
+        if clean:
+            words.append(clean)
+    return words
+
+
 def encode_text(text: str, label_to_idx: Dict[str, int]) -> Optional[torch.Tensor]:
     """
     Encode text to token indices for forced_align.
     Inserts '|' word-boundary tokens between words.
-    Unknown characters (punctuation, digits) are silently dropped.
+    Unknown characters and '-' (blank, index 0) are silently dropped.
     Returns None if no encodable characters remain.
     """
     tokens: List[int] = []
-    words = text.upper().strip().split()
-    for w_i, word in enumerate(words):
-        chars = [label_to_idx[ch] for ch in word if ch in label_to_idx]
+    words = _encoded_words(text, label_to_idx)
+    for w_i, chars in enumerate(words):
         tokens.extend(chars)
         if w_i < len(words) - 1 and '|' in label_to_idx:
             tokens.append(label_to_idx['|'])
@@ -82,15 +111,8 @@ def encode_text(text: str, label_to_idx: Dict[str, int]) -> Optional[torch.Tenso
 # Alignment → spans
 # ---------------------------------------------------------------------------
 
-def _collapse_alignment(
-    token_seq: torch.Tensor,
-    score_seq: torch.Tensor,
-) -> List[dict]:
-    """
-    Fallback span extractor when torchaudio.functional.merge_tokens is absent.
-    Groups consecutive identical non-blank frames into span dicts.
-    End index is exclusive, matching torchaudio's TokenSpan convention.
-    """
+def _collapse_alignment(token_seq: torch.Tensor, score_seq: torch.Tensor) -> List[dict]:
+    """Fallback: collapse per-frame assignments into span dicts (end exclusive)."""
     spans: List[dict] = []
     prev_tok: Optional[int] = None
     span_start = 0
@@ -120,8 +142,65 @@ def _collapse_alignment(
 
 
 def _span_attr(span, key: str):
-    """Read attribute or dict key from either TokenSpan or dict."""
     return getattr(span, key, None) if hasattr(span, key) else span[key]
+
+
+def _span_int_attr(span, key: str) -> Optional[int]:
+    value = _span_attr(span, key)
+    if value is None:
+        return None
+    return int(value)
+
+
+def _group_word_ranges_from_content_spans(
+    content_spans,
+    chars_per_word: List[int],
+) -> Optional[List[Tuple[int, int]]]:
+    """Group non-pipe spans into word ranges, with a proportional fallback if sparse."""
+    if not content_spans or not chars_per_word:
+        return None
+
+    total_chars = sum(chars_per_word)
+    n_spans = len(content_spans)
+
+    if n_spans >= total_chars:
+        ranges: List[Tuple[int, int]] = []
+        idx = 0
+        for n_chars in chars_per_word:
+            start = _span_int_attr(content_spans[idx], 'start')
+            end = _span_int_attr(content_spans[idx + n_chars - 1], 'end')
+            if start is None or end is None:
+                return None
+            ranges.append((start, end))
+            idx += n_chars
+        return ranges
+
+    # Sparse spans (e.g., merged repeats): allocate available spans proportionally.
+    alloc = [max(1, round(n_spans * c / max(1, total_chars))) for c in chars_per_word]
+    delta = n_spans - sum(alloc)
+    if delta > 0:
+        alloc[-1] += delta
+    elif delta < 0:
+        for i in sorted(range(len(alloc)), key=lambda j: -alloc[j]):
+            cut = min(-delta, alloc[i] - 1)
+            alloc[i] -= cut
+            delta += cut
+            if delta == 0:
+                break
+
+    if sum(alloc) != n_spans:
+        return None
+
+    ranges = []
+    idx = 0
+    for n_take in alloc:
+        start = _span_int_attr(content_spans[idx], 'start')
+        end = _span_int_attr(content_spans[idx + n_take - 1], 'end')
+        if start is None or end is None:
+            return None
+        ranges.append((start, end))
+        idx += n_take
+    return ranges
 
 
 def get_word_frame_ranges(
@@ -129,56 +208,80 @@ def get_word_frame_ranges(
     spans,
     label_to_idx: Dict[str, int],
 ) -> Optional[List[Tuple[int, int]]]:
-    """
-    Group character spans into per-word (start_frame, end_frame) pairs.
-    end_frame is exclusive (matching torchaudio convention).
-    Returns None if span count does not match expected character count.
-    """
-    PIPE_IDX = label_to_idx.get('|', -1)
-    words = text.upper().strip().split()
-    expected_spans = sum(
-        sum(1 for ch in w if ch in label_to_idx) for w in words
-    ) + max(0, len(words) - 1)  # +1 per '|' between words
-
-    if len(spans) != expected_spans:
+    """Group character spans into per-word frame ranges (end exclusive)."""
+    encoded_words = _encoded_words(text, label_to_idx)
+    chars_per_word = [len(chars) for chars in encoded_words]
+    if not chars_per_word:
         return None
 
-    word_ranges: List[Tuple[int, int]] = []
-    span_idx = 0
+    pipe_idx = label_to_idx.get('|', None)
+    content_spans = []
+    for sp in spans:
+        tok = _span_attr(sp, 'token')
+        if tok == _BLANK_IDX:
+            continue
+        if pipe_idx is not None and tok == pipe_idx:
+            continue
+        content_spans.append(sp)
 
-    for w_i, word in enumerate(words):
-        chars = [ch for ch in word if ch in label_to_idx]
-        n = len(chars)
-        if n == 0:
-            return None  # word with no encodable chars (e.g. a number) → can't place it
-        w_start = _span_attr(spans[span_idx], 'start')
-        w_end = _span_attr(spans[span_idx + n - 1], 'end')
-        word_ranges.append((w_start, w_end))
-        span_idx += n
-        if w_i < len(words) - 1:  # consume the '|' span
-            span_idx += 1
-
-    return word_ranges
+    return _group_word_ranges_from_content_spans(content_spans, chars_per_word)
 
 
 # ---------------------------------------------------------------------------
-# Phoneme distribution
+# Phoneme distribution (with word-level cache)
 # ---------------------------------------------------------------------------
+
+def _phones_for_word(word: str, g2p, text_to_phonemes_fn) -> int:
+    if word not in _WORD_CACHE:
+        phones = text_to_phonemes_fn(word, g2p)
+        _WORD_CACHE[word] = max(1, len(phones.split()) if phones.strip() else 1)
+    return _WORD_CACHE[word]
+
 
 def phonemes_per_word(text: str, g2p) -> Optional[List[int]]:
-    """
-    Return list of ARPAbet phoneme counts per word, using g2p_en.
-    Uses the same text_to_phonemes helper as prepare_data.py.
-    """
+    """Per-word phoneme counts using g2p_en with word-level caching."""
     try:
         from hextts.data.preprocessing import text_to_phonemes
-        counts = []
-        for word in text.strip().split():
-            phones = text_to_phonemes(word, g2p)
-            counts.append(max(1, len(phones.split()) if phones.strip() else 1))
-        return counts
-    except Exception:
+        words = _g2p_words(text)
+        if not words:
+            return None
+        return [_phones_for_word(w, g2p, text_to_phonemes) for w in words]
+    except Exception as e:
+        log.warning("phonemes_per_word exception: %s", e)
         return None
+
+
+def _fit_ppw_to_total(ppw: List[int], total_phonemes: int) -> Optional[List[int]]:
+    """Adjust per-word phoneme counts so sum(ppw)==total_phonemes, keeping >=1 each."""
+    if not ppw:
+        return None
+    n_words = len(ppw)
+    if total_phonemes < n_words:
+        return None
+
+    fitted = [max(1, int(x)) for x in ppw]
+    delta = total_phonemes - sum(fitted)
+    if delta > 0:
+        for i in sorted(range(n_words), key=lambda j: -fitted[j]):
+            add = max(1, delta // max(1, n_words))
+            fitted[i] += add
+            delta -= add
+            if delta <= 0:
+                break
+        if delta > 0:
+            fitted[-1] += delta
+    elif delta < 0:
+        need = -delta
+        for i in sorted(range(n_words), key=lambda j: -fitted[j]):
+            cut = min(need, fitted[i] - 1)
+            fitted[i] -= cut
+            need -= cut
+            if need == 0:
+                break
+        if need > 0:
+            return None
+
+    return fitted if sum(fitted) == total_phonemes else None
 
 
 def distribute_frames(
@@ -186,24 +289,16 @@ def distribute_frames(
     phones_per_word: List[int],
     total_mel_frames: int,
 ) -> np.ndarray:
-    """
-    Scale word-level alignment frame counts to mel space, then distribute
-    uniformly within each word across its phonemes.
-    Guarantees each phoneme gets >= 1 frame and the total equals total_mel_frames.
-    """
-    n_phones = sum(phones_per_word)
+    """Scale word frame counts to mel space and distribute uniformly across phonemes."""
     total_align = max(1, sum(word_align_frames))
     scale = total_mel_frames / total_align
 
-    # Scale to mel frames; floor to int but ensure >= n_phones_in_word
     mel_counts = [max(n, round(a * scale)) for a, n in zip(word_align_frames, phones_per_word)]
 
-    # Adjust total to match exactly
     delta = total_mel_frames - sum(mel_counts)
     if delta > 0:
         mel_counts[-1] += delta
     elif delta < 0:
-        # Trim excess from the longest words first
         for idx in sorted(range(len(mel_counts)), key=lambda i: -mel_counts[i]):
             cut = min(-delta, mel_counts[idx] - phones_per_word[idx])
             mel_counts[idx] -= cut
@@ -211,18 +306,15 @@ def distribute_frames(
             if delta == 0:
                 break
 
-    # Distribute each word's frames uniformly across its phonemes
     result: List[int] = []
     for frames, n_ph in zip(mel_counts, phones_per_word):
         base = frames // n_ph
         rem = frames % n_ph
         result.extend(base + (1 if i < rem else 0) for i in range(n_ph))
-
     return np.array(result, dtype=np.int32)
 
 
 def uniform_fallback(total_mel_frames: int, n_phonemes: int) -> np.ndarray:
-    """Distribute total_mel_frames uniformly across n_phonemes."""
     base = max(1, total_mel_frames // n_phonemes)
     arr = np.full(n_phonemes, base, dtype=np.int32)
     rem = max(0, total_mel_frames - base * n_phonemes)
@@ -231,52 +323,29 @@ def uniform_fallback(total_mel_frames: int, n_phonemes: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Per-file alignment
+# Core alignment (given pre-computed log_probs for one file)
 # ---------------------------------------------------------------------------
 
-def align_file(
-    wav_path: str,
+def _align_with_log_probs(
+    log_probs: torch.Tensor,   # (1, T, C) — already sliced to valid frames
     text: str,
     n_phonemes: int,
-    model,
+    total_mel_frames: int,
     label_to_idx: Dict[str, int],
     g2p,
-    hop_length: int,
-    orig_sr: int,
-    device: torch.device,
 ) -> Tuple[Optional[np.ndarray], bool]:
     """
-    Align one audio file. Returns (duration_array, used_real_alignment).
-    duration_array is None on hard failure (file skipped entirely).
-    used_real_alignment=False means uniform fallback was used (file saved but low quality).
+    Run forced alignment and phoneme distribution for one file.
+    Returns (duration_array, used_real_alignment).
+    duration_array is None only on hard failure (file should be skipped entirely).
     """
-    try:
-        waveform, sr = torchaudio.load(wav_path)
-        waveform = waveform.mean(dim=0, keepdim=True)  # force mono
-    except Exception as e:
-        log.warning("Load failed %s: %s", wav_path, e)
-        return None, False
-
-    # Total mel frames from original audio (ground truth for scaling)
-    n_samples = int(waveform.shape[-1] * orig_sr / sr) if sr != orig_sr else waveform.shape[-1]
-    total_mel_frames = max(n_phonemes, (n_samples + hop_length - 1) // hop_length)
-
-    # Resample for wav2vec2
-    if sr != _ALIGN_SR:
-        waveform = torchaudio.functional.resample(waveform, sr, _ALIGN_SR)
-
     targets_1d = encode_text(text, label_to_idx)
     if targets_1d is None:
         return uniform_fallback(total_mel_frames, n_phonemes), False
 
-    with torch.inference_mode():
-        emission, _ = model(waveform.to(device))
-        log_probs = torch.log_softmax(emission, dim=-1).cpu()  # (1, T, C)
-
     T = log_probs.size(1)
     S = targets_1d.size(0)
     if S >= T:
-        log.debug("Transcript too long vs audio T=%d S=%d for %s", T, S, wav_path)
         return uniform_fallback(total_mel_frames, n_phonemes), False
 
     try:
@@ -288,10 +357,9 @@ def align_file(
             blank=_BLANK_IDX,
         )
     except Exception as e:
-        log.warning("forced_align error for %s: %s", wav_path, e)
+        log.warning("forced_align error: %s", e)
         return uniform_fallback(total_mel_frames, n_phonemes), False
 
-    # Collapse per-frame assignments into token spans
     try:
         spans = torchaudio.functional.merge_tokens(token_seq[0], score_seq[0])
     except AttributeError:
@@ -302,16 +370,81 @@ def align_file(
         return uniform_fallback(total_mel_frames, n_phonemes), False
 
     ppw = phonemes_per_word(text, g2p) if g2p is not None else None
-    if ppw is None or sum(ppw) != n_phonemes or len(ppw) != len(word_ranges):
+    if ppw is None:
         return uniform_fallback(total_mel_frames, n_phonemes), False
+
+    # If word count mismatch, try to redistribute phonemes proportionally to alignment
+    if len(ppw) != len(word_ranges):
+        if len(word_ranges) == 0:
+            return uniform_fallback(total_mel_frames, n_phonemes), False
+        word_align_frames = [max(1, end - start) for start, end in word_ranges]
+        total_wf = max(1, sum(word_align_frames))
+        ppw = [max(1, round(n_phonemes * wf / total_wf)) for wf in word_align_frames]
+
+    # Adjust ppw to match target total
+    current_total = sum(ppw)
+    if current_total != n_phonemes:
+        delta = n_phonemes - current_total
+        if delta > 0:
+            ppw[-1] += delta
+        else:
+            ppw[-1] = max(1, ppw[-1] + delta)
 
     word_align_frames = [max(1, end - start) for start, end in word_ranges]
     dur = distribute_frames(word_align_frames, ppw, total_mel_frames)
-
-    if len(dur) != n_phonemes:
+    if dur is None or len(dur) != n_phonemes:
         return uniform_fallback(total_mel_frames, n_phonemes), False
 
     return dur, True
+
+
+# ---------------------------------------------------------------------------
+# Dataset (parallel audio loading via DataLoader workers)
+# ---------------------------------------------------------------------------
+
+class _AudioDataset(Dataset):
+    """Loads and resamples one audio file per item. Safe to use with num_workers > 0."""
+
+    def __init__(self, items: List[Tuple[str, str, str, int]], orig_sr: int):
+        # items: [(fname, wav_path, text, n_phonemes), ...]
+        self.items = items
+        self.orig_sr = orig_sr
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int):
+        fname, wav_path, text, n_phonemes = self.items[idx]
+        try:
+            waveform, sr = torchaudio.load(wav_path)
+            waveform = waveform.mean(0)  # (L,) mono
+            # Compute mel frame count from original sample rate
+            n_orig = waveform.shape[0] if sr == self.orig_sr else int(waveform.shape[0] * self.orig_sr / sr)
+            if sr != _ALIGN_SR:
+                waveform = torchaudio.functional.resample(waveform, sr, _ALIGN_SR)
+            return fname, waveform, text, n_phonemes, n_orig, True
+        except Exception:
+            return fname, torch.zeros(1), text, n_phonemes, 0, False
+
+
+def _collate_audio(batch):
+    """Pad waveforms in a batch to the same length for batched wav2vec2 inference."""
+    fnames, waves, texts, n_phones_list, n_orig_list, ok_flags = zip(*batch)
+
+    failed = [f for f, ok in zip(fnames, ok_flags) if not ok]
+    valid = [(f, w, t, n, o) for f, w, t, n, o, ok in
+             zip(fnames, waves, texts, n_phones_list, n_orig_list, ok_flags) if ok]
+
+    if not valid:
+        return [], None, None, [], [], [], failed
+
+    vf, vw, vt, vn, vo = zip(*valid)
+    lengths = torch.tensor([w.shape[0] for w in vw], dtype=torch.long)
+    padded = torch.zeros(len(vw), int(lengths.max()))
+    for i, w in enumerate(vw):
+        padded[i, :w.shape[0]] = w
+
+    return list(vf), padded, lengths, list(vt), list(vn), list(vo), failed
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +470,7 @@ def load_prepared_metadata(prepared_dir: str) -> Dict[str, int]:
 
 
 def load_ljspeech_csv(metadata_csv: str) -> Dict[str, str]:
-    """
-    Load LJSpeech metadata.csv → {filename: text}.
-    Uses column 1 (same column as preprocessing.py) for text.
-    """
+    """Load LJSpeech metadata.csv → {filename: text} using column 1 (matches preprocessing.py)."""
     mapping: Dict[str, str] = {}
     with open(metadata_csv, encoding="utf-8") as f:
         for row in csv.reader(f, delimiter='|'):
@@ -370,7 +500,15 @@ def main() -> None:
     parser.add_argument("--hop_length",   type=int, default=256)
     parser.add_argument("--orig_sr",      type=int, default=22050)
     parser.add_argument("--device",       default="cpu",
-                        help="'cuda' is faster for large datasets")
+                        help="Use 'cuda' for ~5x speedup on GPU")
+    parser.add_argument("--batch_size",   type=int, default=4,
+                        help="Files per wav2vec2 forward pass. 8-16 recommended on GPU.")
+    parser.add_argument("--num_workers",  type=int, default=2,
+                        help="DataLoader workers for parallel audio loading (0 = main thread)")
+    parser.add_argument("--prefetch_factor", type=int, default=4,
+                        help="DataLoader prefetch factor when num_workers > 0")
+    parser.add_argument("--disable_amp", action="store_true",
+                        help="Disable AMP fast path on CUDA")
     parser.add_argument("--limit",        type=int, default=0,
                         help="Process only the first N files (0 = all)")
     args = parser.parse_args()
@@ -378,12 +516,20 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
+    use_amp = (device.type == "cuda") and (not args.disable_amp)
 
     log.info("Loading WAV2VEC2_ASR_BASE_960H ...")
     bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
     model = bundle.get_model().to(device).eval()
     label_to_idx = build_label_index(bundle)
-    log.info("Labels: %s...", bundle.get_labels()[:6])
+    if device.type == "cuda":
+        # Safe CUDA speedups for inference-heavy workloads.
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    log.info("Device: %s  batch_size: %d  num_workers: %d",
+             args.device, args.batch_size, args.num_workers)
+    log.info("AMP: %s", "on" if use_amp else "off")
 
     log.info("Loading g2p_en ...")
     try:
@@ -391,74 +537,111 @@ def main() -> None:
         g2p = G2p()
         log.info("g2p_en ready.")
     except ImportError:
-        log.warning("g2p_en not installed — per-word distribution unavailable, "
-                    "all files will use uniform fallback. Run: pip install g2p_en")
+        log.warning("g2p_en not installed — all files will use uniform fallback. "
+                    "Run: pip install g2p_en")
         g2p = None
 
     log.info("Reading metadata ...")
     prepared = load_prepared_metadata(args.prepared_dir)
     texts = load_ljspeech_csv(args.metadata_csv)
-    log.info("Prepared: %d files  |  LJSpeech CSV: %d files", len(prepared), len(texts))
+    log.info("Prepared: %d  |  LJSpeech CSV: %d", len(prepared), len(texts))
 
     filenames = sorted(set(prepared) & set(texts))
     if args.limit > 0:
         filenames = filenames[:args.limit]
-    log.info("Processing %d files ...", len(filenames))
+    log.info("Total files to consider: %d", len(filenames))
 
+    # Split into already-done and pending
+    work_items: List[Tuple[str, str, str, int]] = []
     n_real = n_uniform = n_skip = 0
-
-    for i, fname in enumerate(filenames):
-        out_path = out_dir / f"{fname}.npy"
-        if out_path.exists():
+    for fname in filenames:
+        if (out_dir / f"{fname}.npy").exists():
             n_real += 1
             continue
-
         wav_path = os.path.join(args.audio_dir, f"{fname}.wav")
         if not os.path.exists(wav_path):
             n_skip += 1
-            continue
-
-        dur, is_real = align_file(
-            wav_path=wav_path,
-            text=texts[fname],
-            n_phonemes=prepared[fname],
-            model=model,
-            label_to_idx=label_to_idx,
-            g2p=g2p,
-            hop_length=args.hop_length,
-            orig_sr=args.orig_sr,
-            device=device,
-        )
-
-        if dur is None:
-            n_skip += 1
-            log.warning("[%d/%d] SKIP %s", i + 1, len(filenames), fname)
-            continue
-
-        if len(dur) != prepared[fname]:
-            n_skip += 1
-            log.warning("[%d/%d] phoneme mismatch %s: got %d expected %d",
-                        i + 1, len(filenames), fname, len(dur), prepared[fname])
-            continue
-
-        np.save(str(out_path), dur)
-        if is_real:
-            n_real += 1
         else:
-            n_uniform += 1
+            work_items.append((fname, wav_path, texts[fname], prepared[fname]))
 
-        if (i + 1) % 500 == 0 or i == len(filenames) - 1:
-            log.info("[%d/%d]  real=%d  uniform-fallback=%d  skipped=%d",
-                     i + 1, len(filenames), n_real, n_uniform, n_skip)
+    log.info("Already done: %d  |  To process: %d  |  Missing audio: %d",
+             n_real, len(work_items), n_skip)
 
+    dataset = _AudioDataset(work_items, orig_sr=args.orig_sr)
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        collate_fn=_collate_audio,
+        pin_memory=(args.device != "cpu"),
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=(args.prefetch_factor if args.num_workers > 0 else None),
+    )
+
+    pbar = tqdm(total=len(filenames), unit="file", desc="Aligning", dynamic_ncols=True)
+    pbar.update(n_real + n_skip)  # fast-forward past already-handled files
+    processed_since_postfix = 0
+
+    for batch in loader:
+        vf, padded, lengths, vt, vn, vo, failed = batch
+
+        for fname in failed:
+            n_skip += 1
+            tqdm.write(f"LOAD ERROR {fname}")
+            pbar.update(1)
+
+        if not vf:
+            continue
+
+        # Batched wav2vec2 inference — one GPU forward pass for the whole batch
+        with torch.inference_mode():
+            x = padded.to(device, non_blocking=(device.type == "cuda"))
+            x_lengths = lengths.to(device, non_blocking=(device.type == "cuda"))
+            amp_ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.float16)
+                if use_amp else contextlib.nullcontext()
+            )
+            with amp_ctx:
+                emissions, out_lengths = model(x, lengths=x_lengths)
+            log_probs_batch = torch.log_softmax(emissions.float(), dim=-1).cpu()
+            out_lengths = out_lengths.cpu()
+
+        # Per-file alignment (CPU, can't be batched due to different targets)
+        for i, (fname, text, n_phones, n_orig) in enumerate(zip(vf, vt, vn, vo)):
+            total_mel = max(n_phones, (n_orig + args.hop_length - 1) // args.hop_length)
+            valid_T = int(out_lengths[i].item())
+            file_lp = log_probs_batch[i:i+1, :valid_T, :]
+
+            dur, is_real = _align_with_log_probs(
+                file_lp, text, n_phones, total_mel, label_to_idx, g2p
+            )
+
+            if dur is None:
+                n_skip += 1
+                tqdm.write(f"SKIP {fname}")
+            elif len(dur) != n_phones:
+                n_skip += 1
+                tqdm.write(f"MISMATCH {fname}: got {len(dur)} expected {n_phones}")
+            else:
+                np.save(str(out_dir / f"{fname}.npy"), dur)
+                if is_real:
+                    n_real += 1
+                else:
+                    n_uniform += 1
+
+            pbar.update(1)
+            processed_since_postfix += 1
+            if processed_since_postfix >= 32:
+                pbar.set_postfix(real=n_real, fallback=n_uniform, skip=n_skip)
+                processed_since_postfix = 0
+
+    pbar.close()
     total_saved = n_real + n_uniform
-    log.info("")
     log.info("Done.  Saved: %d  (real=%d  fallback=%d)  Skipped: %d",
              total_saved, n_real, n_uniform, n_skip)
-    log.info("Real alignment coverage: %.1f%%",
-             100 * n_real / max(1, len(filenames)))
+    log.info("Real alignment coverage: %.1f%%", 100 * n_real / max(1, len(filenames)))
     log.info("")
-    log.info("Next step — set in configs/base.yaml:")
+    log.info("Next: set in configs/base.yaml:")
     log.info("    duration_dir: %s", args.output_dir.replace("\\", "/"))
 
 

@@ -9,6 +9,101 @@ Migration note (v0.5.x): older entries may mention legacy files such as `train_v
 
 ---
 
+## [v0.5.4] - 2026-05-01
+
+### _"The Duration Predictor Finally Has Real Targets To Learn From (And We Didn't Mess Up The Imports This Time)"_
+
+### Summary
+
+One new script, 12,884 duration files, zero architectural changes, and one import path that was quietly
+failing for three hours because Python doesn't shout about missing packages inside exception handlers.
+
+The headline: phoneme-level duration alignment is complete. All 12,884 LJSpeech utterances now have real,
+ground-truth duration targets extracted via torchaudio forced alignment to WAV2VEC2_ASR_BASE_960H.
+The duration predictor can now learn what it is supposed to predict instead of guessing from reconstruction
+loss gradients and hoping for the best.
+
+The subplot: the alignment script spent six hours producing 0% real alignments (100% fallback) despite
+98% success rate in isolation diagnostics. Root cause: `hextts` package import inside exception handler.
+Silent failure. Hidden by catch. Fixed once sys.path was corrected. Moral: don't catch exceptions without
+logging them first.
+
+### New
+
+- **Windows-Native Phoneme Alignment** — `scripts/align_torchaudio.py`
+  - Single-script alternative to MFA (Linux/conda, external tools, manual setup)
+  - Uses `torchaudio.functional.forced_align()` with pretrained WAV2VEC2_ASR_BASE_960H model (960 hours LibriSpeech)
+  - Inputs: audio directory, metadata CSV, prepared data directory
+  - Outputs: per-file duration arrays saved as `.npy` (int32, frame-level frame counts per phoneme)
+  - Batched inference with DataLoader + configurable workers, prefetch, and AMP for GPU acceleration
+  - GPU throughput: **6.22 files/sec** on RTX 3050 Ti (batch_size=8, num_workers=4, AMP, TF32)
+  - Fallback strategy for sparse alignments: proportional frame redistribution across phonemes (handles edge cases)
+  - Real alignment coverage: **100%** (12,884 real, 0 fallback) on full LJSpeech after import fix
+
+- **Duration Directory Configuration** — `configs/base.yaml`, `configs/continue_auto.yaml`, `configs/continue3.yaml`, `configs/debug.yaml`, `configs/sanity.yaml`
+  - Added `duration_dir: ./data/ljspeech_prepared/durations` to all config profiles
+  - Trainer now loads real duration targets by default if directory exists; graceful fallback to pseudo-uniform if missing
+  - All training modes (base, continuation, debug, sanity) now use real targets
+
+### Fixed
+
+- **Silent hextts Import Failure in align_torchaudio.py** — `scripts/align_torchaudio.py` line 47
+  - `phonemes_per_word()` from `hextts.data.preprocessing` was being imported inside exception handler
+  - When called in batch mode, import error was silently swallowed → PPW calculation returned None → all alignments fell back
+  - Diagnostic tests worked because they ran outside the batched pipeline
+  - Fix: added `sys.path.insert(0, str(Path(__file__).parent.parent))` at module top
+  - Added exception logging in `phonemes_per_word()` to expose hidden errors
+  - Result: real alignment coverage restored from 0% to 100%
+
+### Improved
+
+- **Alignment Robustness** — `scripts/align_torchaudio.py`
+  - Flexible span grouping: if word count from WAV2VEC2 alignment mismatches text g2p,
+    proportionally redistribute available phonemes across alignment frames instead of rejecting batch
+  - Covers edge cases: merged contractions, tokenizer quirks, pronunciation variations
+  - Logs mismatch summary (real vs fallback) at end
+
+- **GPU Optimization Defaults** — `scripts/align_torchaudio.py` (CLI options)
+  - `--device cuda` (or `cpu`; GPU by default if CUDA available)
+  - `--batch_size 8` (GPU batching, default 1 for CPU)
+  - `--num_workers 4` (parallel audio loading, Windows-safe)
+  - `--prefetch_factor 4` (reduced to 1 on macOS for stability)
+  - `--disable_amp` flag to turn off AMP if needed (default: AMP enabled on CUDA)
+  - Non-blocking GPU transfers: `to(device, non_blocking=(device.type == "cuda"))`
+  - TF32 + cuDNN benchmark mode for tensor cores: `torch.backends.cuda.matmul.allow_tf32 = True`
+
+- **TensorBoard Duration Diagnostics** — `hextts/training/trainer.py` (unchanged API, inherited in v0.5.3)
+  - Trainer already logs `train/using_real_duration_targets` to confirm real vs pseudo mode
+  - Now configs send real targets by default; log value changes from 0.0 to 1.0
+
+### Developer Status
+
+```
+Duration files generated           : 12,884 (100% real alignment)
+Files processed                    : 12,884
+Alignment fallback rate            : 0% (initial 100% before import fix)
+GPU throughput achieved            : 6.22 files/sec
+Invisible bugs fixed               : 1 (hextts import + exception handler)
+Config files updated               : 5 (all training profiles)
+Time spent debugging why 0% worked : 3 hours (worth it)
+Moral of the story                 : catch exceptions, log them, move on
+```
+
+### Expected Impact
+
+- Duration predictor loss should converge faster (real targets vs proxy-learned targets)
+- Inference duration predictions should be more realistic (trained on ground truth)
+- No model architecture changes; resumable from any v0.5.3 checkpoint
+- Fresh training with real durations recommended for best quality
+
+### Compatibility
+
+- **Checkpoint-safe.** No architecture or model state changes. All v0.5.3 checkpoints remain valid.
+- **Config-compatible.** The `duration_dir` key is optional; if missing or empty, trainer falls back to pseudo-uniform durations.
+- **Backward-compatible.** Script runs on CPU if CUDA unavailable; defaults are conservative.
+
+---
+
 ## [v0.5.3] - 2026-04-28
 
 ### _"The Model Was Doing Everything Wrong Architecturally And We Fixed It"_
@@ -179,10 +274,10 @@ Everything else in this patch is about making failures loud, not silent.
 
 ### New TensorBoard Scalars
 
-| Scalar | What It Tells You |
-|--------|-------------------|
-| `train/skipped_batches` | How many batches were silently excluded from this epoch's loss average |
-| `train/length_mismatch_frames` | Frame-count delta between predicted and target mel |
+| Scalar                         | What It Tells You                                                      |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `train/skipped_batches`        | How many batches were silently excluded from this epoch's loss average |
+| `train/length_mismatch_frames` | Frame-count delta between predicted and target mel                     |
 
 ### Tests Added
 
@@ -300,11 +395,11 @@ for your ears and your TensorBoard dashboard.
 
 ### New TensorBoard Scalars
 
-| Scalar | What It Tells You |
-|--------|------------------|
-| `train/kl_anneal_factor` | KL ramp progress (0.0 → 1.0 over `kl_warmup_steps`) |
+| Scalar                   | What It Tells You                                       |
+| ------------------------ | ------------------------------------------------------- |
+| `train/kl_anneal_factor` | KL ramp progress (0.0 → 1.0 over `kl_warmup_steps`)     |
 | `train/pre_postnet_loss` | How bad the decoder mel is before PostNet covers for it |
-| `train/ms_mel_loss` | Multi-scale temporal alignment quality |
+| `train/ms_mel_loss`      | Multi-scale temporal alignment quality                  |
 
 ### Compatibility
 
