@@ -1,10 +1,14 @@
 # HexTTs Troubleshooting
 
-This page is a placeholder for common issues and debugging notes.
+The maintained troubleshooting guide is now [Operations and Troubleshooting](operations-troubleshooting.md).
 
-## Topics
+Use it for:
 
 - config validation failures
 - checkpoint compatibility errors
 - dataloader and cache mismatches
+- NaNs during training
 - vocoder setup problems
+- noisy or buzzy generated audio
+
+For the full project map, see [Documentation Index](index.md).

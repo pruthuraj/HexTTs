@@ -1,33 +1,37 @@
 # HexTTs Training
 
-Current training entrypoint:
+This page is the quick training entrypoint. For the full explanation of model design, losses, checkpoints, and stability guardrails, see [Model and Training](model-training.md).
+
+## Standard Run
 
 ```bash
-venv\Scripts\python.exe scripts\train.py --config configs/base.yaml --device cuda
+python scripts/train.py --config configs/base.yaml --device cuda
 ```
 
-Quick profile variants:
+## Short Profiles
 
 ```bash
-# Fast debug smoke run
-venv\Scripts\python.exe scripts\train.py --config configs/debug.yaml --device cuda
-
-# One-epoch sanity run
-venv\Scripts\python.exe scripts\train.py --config configs/sanity.yaml --device cuda
-
-# 3-epoch continuation profile
-venv\Scripts\python.exe scripts\train.py --config configs/continue3.yaml --device cuda
+python scripts/train.py --config configs/debug.yaml --device cuda
+python scripts/train.py --config configs/sanity.yaml --device cuda
+python scripts/train.py --config configs/continue3.yaml --device cuda
 ```
 
-Resume from checkpoint:
+## Resume
 
 ```bash
-venv\Scripts\python.exe scripts\train.py --config configs/base.yaml --checkpoint checkpoints/checkpoint_step_080000.pt --device cuda
+python scripts/train.py --config configs/base.yaml --checkpoint checkpoints/checkpoint_step_080000.pt --device cuda
 ```
 
-## Topics
+## Before Training
 
-- config-driven training setup
-- raw vs cached dataloaders
-- checkpoint save and resume flow
-- training stability and runtime invariants
+```bash
+python scripts/validate_dataset.py ./data/LJSpeech-1.1
+python scripts/prepare_data.py ./data/LJSpeech-1.1 ./data/ljspeech_prepared
+python scripts/precompute_features.py --config configs/base.yaml
+```
+
+## Related Docs
+
+- [Data Pipeline](data-pipeline.md)
+- [Model and Training](model-training.md)
+- [Operations and Troubleshooting](operations-troubleshooting.md)
